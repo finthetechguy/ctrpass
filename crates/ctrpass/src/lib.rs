@@ -1,6 +1,7 @@
 //! StreetPass with Nintendo 3DS consoles.
 
 pub mod keys;
+pub mod radio;
 pub mod streetpass;
 pub mod wifi;
 

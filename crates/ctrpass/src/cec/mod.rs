@@ -2,6 +2,7 @@
 
 pub mod container;
 pub mod envelope;
+pub mod icon;
 pub mod object;
 
 pub use container::Container;

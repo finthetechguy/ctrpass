@@ -5,6 +5,8 @@ pub mod exchange;
 pub mod identity;
 pub mod keys;
 pub mod link;
+pub mod mii;
+pub mod plaza;
 pub mod radio;
 pub mod scan;
 #[cfg(test)]

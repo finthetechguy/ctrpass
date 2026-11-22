@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 
+import ctrpass
+
 from .settings import data_dir
 
 FOLDERS = (
@@ -12,7 +14,7 @@ FOLDERS = (
     ("lime3ds-emu", "Lime3DS"),
 )
 PROCESSES = {"azahar", "azahar-qt", "azaharplus", "citra", "citra-qt", "lime3ds", "lime3ds-qt", "azahar-room"}
-CEC = Path("sysdata/00010026/00000000/CEC")
+CEC = Path(ctrpass.EMULATOR_CEC)
 
 
 def cec_folder(base):

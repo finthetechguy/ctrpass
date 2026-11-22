@@ -2,12 +2,14 @@
 
 from pathlib import Path
 
+import ctrpass
 
-def wireless_interfaces(root="/sys/class/net"):
+
+def wireless_interfaces(root="/sys/class/net", skip=ctrpass.INTERFACE_PREFIX):
     """Returns (name, connected) for each wireless interface, unconnected ones first."""
     out = []
     for dev in sorted(Path(root).glob("*")):
-        if not (dev / "phy80211").exists() or dev.name.startswith("ctrpass"):
+        if not (dev / "phy80211").exists() or dev.name.startswith(skip):
             continue
         try:
             carrier = (dev / "carrier").read_text().strip() == "1"

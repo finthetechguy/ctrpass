@@ -1,5 +1,7 @@
 """Turning title field values into text for editing and back."""
 
+import ctrpass
+
 
 def number_text(kind, value):
     if value is None:
@@ -53,25 +55,20 @@ def changed(before, after):
 
 
 # Names for common StreetPass games, used until a console's own data names them.
-KNOWN = {
-    0x00020500: "Nintendo 3DS Sound",
-    0x00020800: "Mii Plaza",
-    0x00030600: "Mario Kart 7",
-    0x00030B00: "nintendogs + cats",
-    0x00051600: "Nintendo Letter Box",
-    0x00053F00: "Super Mario 3D Land",
-    0x0007AD00: "New Super Mario Bros. 2",
-    0x0007C800: "Mario Tennis Open",
-    0x0008C500: "Tomodachi Life",
-    0x0012EC00: "Tetris Ultimate",
-    0x00141000: "Pokémon Shuffle",
-    0x001A0400: "Super Mario Maker",
-}
+def game_name(title):
+    """The usual name of a game known to use StreetPass, or None."""
+    global _GAMES
+    if _GAMES is None:
+        _GAMES = {int(t): n for t, n in ctrpass.game_names().items()}
+    return _GAMES.get(title)
+
+
+_GAMES = None
 
 
 def title_name(title, names=None):
     """A display name for a title ID, from `names` when known."""
-    name = (names or {}).get(title) or KNOWN.get(title)
+    name = (names or {}).get(title) or game_name(title)
     return name or f"Game {title:08X}"
 
 

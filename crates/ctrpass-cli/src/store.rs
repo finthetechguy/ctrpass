@@ -116,7 +116,7 @@ fn listing(store: &Store) -> Result<serde_json::Value, ctrpass::Error> {
         }
         titles.push(json!({
             "title": format!("{t:08X}"),
-            "name": store.title_name(t),
+            "name": store.title_name(t).or_else(|| ctrpass::games::name(t).map(String::from)),
             "key": store.title_key(t).is_some(),
             "receive": receive.contains(&t),
             "messages": boxes,

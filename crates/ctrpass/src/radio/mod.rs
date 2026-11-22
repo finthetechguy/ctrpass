@@ -10,6 +10,9 @@ use crate::wifi::radiotap::RxInfo;
 pub mod linux;
 pub mod pcap;
 
+/// Start of the names given to interfaces made for StreetPass.
+pub const INTERFACE_PREFIX: &str = "ctrpass";
+
 /// Transmit rates in units of 500 kbit/s.
 pub const RATE_1M: u8 = 2;
 pub const RATE_11M: u8 = 22;

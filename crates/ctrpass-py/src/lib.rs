@@ -165,6 +165,16 @@ fn titles(py: Python<'_>) -> PyResult<PyObject> {
     to_py(py, &Value::from(all))
 }
 
+/// Names of games known to use StreetPass, by title ID.
+#[pyfunction]
+fn game_names(py: Python<'_>) -> PyResult<PyObject> {
+    let names: serde_json::Map<String, Value> = ::ctrpass::games::all()
+        .iter()
+        .map(|(t, n)| (t.to_string(), Value::from(*n)))
+        .collect();
+    to_py(py, &Value::from(names))
+}
+
 fn find_title(id: u32) -> PyResult<&'static dyn title::Title> {
     title::by_id(id).ok_or_else(|| PyKeyError::new_err(format!("no fields are known for {id:08X}")))
 }
@@ -532,6 +542,9 @@ fn ctrpass(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(icon_rgb, m)?)?;
     m.add_function(wrap_pyfunction!(icon_from_rgb, m)?)?;
     m.add_function(wrap_pyfunction!(title_key_of, m)?)?;
+    m.add_function(wrap_pyfunction!(game_names, m)?)?;
     m.add("version", env!("CARGO_PKG_VERSION"))?;
+    m.add("INTERFACE_PREFIX", ::ctrpass::radio::INTERFACE_PREFIX)?;
+    m.add("EMULATOR_CEC", export::folder::EMULATOR_SUBPATH)?;
     Ok(())
 }

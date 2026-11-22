@@ -234,7 +234,7 @@ impl LinuxRadio {
         }
         let phy = phy_of(interface)?;
         let lock = lock_phy(phy)?;
-        let monitor = format!("ctrpass{phy}");
+        let monitor = format!("{}{phy}", super::INTERFACE_PREFIX);
         delete_helpers(&monitor);
 
         let mut restore = Restore {

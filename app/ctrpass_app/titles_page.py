@@ -3,7 +3,7 @@
 import ctrpass
 from gi.repository import Adw, GLib, Gtk
 
-from .fields import KNOWN, title_name
+from .fields import game_name, title_name
 
 
 def esc(text):
@@ -85,7 +85,7 @@ class TitlesPage(Gtk.Stack):
             return []
         held = {t["title"] for t in self.window.store.titles()}
         names = self.window.title_names()
-        return [(t, names.get(t) or KNOWN.get(t), ctrpass.title_key_of(keys, t)) for t in ids if t not in held]
+        return [(t, names.get(t) or game_name(t), ctrpass.title_key_of(keys, t)) for t in ids if t not in held]
 
     def add_dialog(self):
         if self.window.store is None:

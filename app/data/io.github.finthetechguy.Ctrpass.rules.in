@@ -1,0 +1,15 @@
+// Lets members of @GROUP@ start the StreetPass helper without a password, and nothing else ctrpass can do.
+polkit.addRule(function (action, subject) {
+    if (action.id !== "io.github.finthetechguy.Ctrpass.serve" || !subject.active || !subject.isInGroup("@GROUP@")) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    var program = "@BINDIR@/ctrpass";
+    var line = action.lookup("command_line") || "";
+    if (action.lookup("program") !== program || line.indexOf(program + " ") !== 0) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (/^ serve -i [A-Za-z0-9_.-]{1,15}( --force)?$/.test(line.substring(program.length))) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

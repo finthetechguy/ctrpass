@@ -12,6 +12,7 @@ mod info;
 mod plaza;
 mod store;
 mod title;
+mod transfer;
 
 #[derive(Parser)]
 #[command(
@@ -90,6 +91,47 @@ enum Command {
     Store {
         #[command(subcommand)]
         action: store::Action,
+    },
+    /// Copy messages and title keys into the store from a save image, CEC folder or message file.
+    Import {
+        from: PathBuf,
+        /// File every message in this box instead of the one it was kept in.
+        #[arg(long = "to", value_enum)]
+        to: Option<store::BoxArg>,
+        /// Only list what would be imported.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Deliver the store's messages into a console-shaped CEC folder, such as an emulator's.
+    Export {
+        /// CEC folder or emulator data folder; found automatically when one emulator is installed.
+        dest: Option<PathBuf>,
+        #[arg(long = "box", value_enum, default_value_t = store::BoxArg::Inbox)]
+        mailbox: store::BoxArg,
+        /// Only this title, in hex.
+        #[arg(long, value_parser = store::parse_hex::<u32>)]
+        title: Option<u32>,
+        /// Write plain message files as TITLE/_id instead.
+        #[arg(long)]
+        raw: bool,
+        /// Report what would be delivered without writing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Write even while an emulator is running.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Fill the key file from dumps of your own console.
+    Keys {
+        /// Decrypted StreetPass system module (code.bin), for the link HMAC key.
+        #[arg(long)]
+        module: Option<PathBuf>,
+        /// File offset of the key in the module, when the search does not find it.
+        #[arg(long, value_parser = store::parse_hex::<usize>)]
+        offset: Option<usize>,
+        /// CEC save image or folder, for each title's signing key; repeatable.
+        #[arg(long = "titles")]
+        titles: Vec<PathBuf>,
     },
 }
 
@@ -282,6 +324,37 @@ fn run(cli: Cli) -> Result<(), String> {
             let keys = optional_keys(&cli.keys)?;
             let path = cli.store.map_or_else(store::default_path, Ok)?;
             store::run(&path, action, keys.as_ref())
+        }
+        Command::Import { from, to, dry_run } => {
+            let path = cli.store.map_or_else(store::default_path, Ok)?;
+            transfer::import(&path, &from, to, dry_run)
+        }
+        Command::Export {
+            dest,
+            mailbox,
+            title,
+            raw,
+            dry_run,
+            force,
+        } => {
+            let path = cli.store.map_or_else(store::default_path, Ok)?;
+            let args = transfer::ExportArgs {
+                dest: dest.as_deref(),
+                mailbox: mailbox.into(),
+                title,
+                raw,
+                dry_run,
+                force,
+            };
+            transfer::export(&path, &args)
+        }
+        Command::Keys {
+            module,
+            offset,
+            titles,
+        } => {
+            let out = key_path(&cli.keys).map_or_else(transfer::default_key_path, Ok)?;
+            transfer::extract_keys(&out, module.as_deref(), offset, &titles)
         }
     }
 }

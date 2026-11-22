@@ -29,7 +29,7 @@ pub enum Switch {
     Off,
 }
 
-fn parse_hex<T: TryFrom<u64>>(s: &str) -> Result<T, String> {
+pub(crate) fn parse_hex<T: TryFrom<u64>>(s: &str) -> Result<T, String> {
     let digits = s.trim_start_matches("0x");
     u64::from_str_radix(digits, 16)
         .ok()

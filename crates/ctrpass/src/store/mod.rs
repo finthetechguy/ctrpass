@@ -15,7 +15,7 @@ use crate::keys::TitleKey;
 use crate::streetpass::service::{self, Service};
 use crate::wifi::frame::Mac;
 
-mod disk;
+pub(crate) mod disk;
 pub mod peers;
 
 pub use peers::PeerBook;
@@ -54,7 +54,7 @@ pub enum Mailbox {
 impl Mailbox {
     pub const ALL: [Mailbox; 2] = [Mailbox::Inbox, Mailbox::Outbox];
 
-    fn dir(self) -> &'static str {
+    pub(crate) fn dir(self) -> &'static str {
         match self {
             Mailbox::Inbox => "InBox___",
             Mailbox::Outbox => "OutBox__",

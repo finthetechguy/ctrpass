@@ -116,6 +116,69 @@ impl Keys {
     }
 }
 
+/// The development key string, which sits one slot after the retail key in the StreetPass module.
+const DEV_KEY: &[u8] = b"0123456789abcdef\0";
+const KEY_SLOT: usize = 0x14;
+
+fn is_key_char(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || b"_-.".contains(&c)
+}
+
+/// Finds the link HMAC key in a decrypted StreetPass system module, at `offset` when given.
+pub fn find_hmac_key(code: &[u8], offset: Option<usize>) -> Result<[u8; 16], Error> {
+    let at = match offset {
+        Some(o) => o,
+        None => {
+            let dev = code
+                .windows(DEV_KEY.len())
+                .position(|w| w == DEV_KEY)
+                .ok_or_else(|| {
+                    Error::Keys("no key string found; is the module still encrypted?".into())
+                })?;
+            dev.checked_sub(KEY_SLOT)
+                .ok_or_else(|| Error::Keys("no room for a key before the one found".into()))?
+        }
+    };
+    let key = code
+        .get(at..at + 17)
+        .filter(|k| k[..16].iter().all(|&c| is_key_char(c)) && k[16] == 0)
+        .ok_or_else(|| Error::Keys(format!("no key string at {at:#x}")))?;
+    Ok(key[..16].try_into().unwrap())
+}
+
+/// The key file name for the link HMAC key.
+pub fn hmac_entry() -> &'static str {
+    HMAC_NAME
+}
+
+/// The key file name for a title's signing key.
+pub fn title_entry(title: u32) -> String {
+    format!("{TITLE_PREFIX}{title:08X}")
+}
+
+fn to_hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Sets `entries` in key file text, replacing lines of the same name and keeping everything else.
+pub fn set_entries(text: &str, entries: &[(String, Vec<u8>)]) -> String {
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    for (name, value) in entries {
+        let line = format!("{name}={}", to_hex(value));
+        let same = |l: &String| {
+            l.split_once('=')
+                .is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case(name))
+        };
+        match lines.iter().position(same) {
+            Some(i) => lines[i] = line,
+            None => lines.push(line),
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
 fn parse_hex(hex: &str) -> Option<Vec<u8>> {
     if hex.len() % 2 != 0 || !hex.is_ascii() {
         return None;
@@ -132,6 +195,37 @@ mod tests {
 
     const BASE: &str = "slot0x2EKeyN=000102030405060708090a0b0c0d0e0f\n\
                         streetpassHmacKey=41414141414141414141414141414141\n";
+
+    #[test]
+    fn finds_hmac_key() {
+        let mut code = vec![0xffu8; 0x40];
+        code.extend_from_slice(b"Abc_def-0123.xyz\0\0\0\0");
+        code.extend_from_slice(DEV_KEY);
+        code.extend_from_slice(&[0; 8]);
+        assert_eq!(&find_hmac_key(&code, None).unwrap(), b"Abc_def-0123.xyz");
+        assert_eq!(
+            &find_hmac_key(&code, Some(0x40)).unwrap(),
+            b"Abc_def-0123.xyz"
+        );
+        assert!(find_hmac_key(&code, Some(0x41)).is_err());
+        assert!(find_hmac_key(&code[..0x40], None).is_err());
+    }
+
+    #[test]
+    fn sets_entries_in_place() {
+        let text = "# keys\nstreetpassHmacKey=00\nslot0x2EKeyN=11\n";
+        let out = set_entries(
+            text,
+            &[
+                (hmac_entry().into(), vec![0xab, 0xcd]),
+                (title_entry(0x20800), vec![1, 2]),
+            ],
+        );
+        assert_eq!(
+            out,
+            "# keys\nstreetpassHmacKey=abcd\nslot0x2EKeyN=11\ntitleKey00020800=0102\n"
+        );
+    }
 
     #[test]
     fn scramble_is_rotations_and_add() {

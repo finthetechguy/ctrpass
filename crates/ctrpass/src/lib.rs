@@ -2,6 +2,7 @@
 
 pub mod cec;
 pub mod exchange;
+pub mod export;
 pub mod identity;
 pub mod keys;
 pub mod link;

@@ -263,7 +263,9 @@ dependencies = [
  "ctrlc",
  "ctrpass",
  "png",
+ "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -272,6 +274,7 @@ version = "0.1.0"
 dependencies = [
  "ctrpass",
  "pyo3",
+ "serde_json",
 ]
 
 [[package]]

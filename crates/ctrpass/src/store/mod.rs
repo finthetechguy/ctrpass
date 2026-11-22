@@ -17,8 +17,10 @@ use crate::wifi::frame::Mac;
 
 pub(crate) mod disk;
 pub mod peers;
+pub mod snapshot;
 
 pub use peers::PeerBook;
+pub use snapshot::Snapshot;
 
 pub const MAX_TITLES: usize = 24;
 pub const INBOX_MAX_BYTES: usize = 0x10_0000;

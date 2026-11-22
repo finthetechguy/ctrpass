@@ -10,6 +10,8 @@ mod decode;
 mod exchange;
 mod info;
 mod plaza;
+#[cfg(target_os = "linux")]
+mod serve;
 mod store;
 mod title;
 mod transfer;
@@ -118,6 +120,14 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
         /// Write even while an emulator is running.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Run as the desktop app's radio helper, taking JSON-line commands on stdin.
+    Serve {
+        #[arg(short, long)]
+        interface: String,
+        /// Take the interface even when another program manages it.
         #[arg(long)]
         force: bool,
     },
@@ -348,6 +358,10 @@ fn run(cli: Cli) -> Result<(), String> {
             };
             transfer::export(&path, &args)
         }
+        #[cfg(target_os = "linux")]
+        Command::Serve { interface, force } => serve::run(&interface, force),
+        #[cfg(not(target_os = "linux"))]
+        Command::Serve { .. } => Err("the helper needs Linux".into()),
         Command::Keys {
             module,
             offset,

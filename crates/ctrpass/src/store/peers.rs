@@ -49,6 +49,13 @@ pub struct PeerBook {
     book: Book,
 }
 
+/// Checks that `v` is a peer book.
+pub(crate) fn check(v: &serde_json::Value) -> Result<(), Error> {
+    Book::deserialize(v)
+        .map(|_| ())
+        .map_err(|e| Error::Format(format!("peer book: {e}")))
+}
+
 pub fn mac_key(mac: &Mac) -> String {
     mac.iter()
         .map(|b| format!("{b:02x}"))

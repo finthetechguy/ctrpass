@@ -20,7 +20,7 @@ pub enum RoleArg {
 }
 
 impl RoleArg {
-    fn for_pass(self, pass: u32) -> Role {
+    pub(crate) fn for_pass(self, pass: u32) -> Role {
         match self {
             RoleArg::Lead => Role::Lead,
             RoleArg::Wait => Role::Wait,
@@ -30,14 +30,14 @@ impl RoleArg {
     }
 }
 
-fn role_name(role: Role) -> &'static str {
+pub(crate) fn role_name(role: Role) -> &'static str {
     match role {
         Role::Lead => "lead",
         Role::Wait => "wait",
     }
 }
 
-fn event_json(e: &Event) -> Option<Value> {
+pub(crate) fn event_json(e: &Event) -> Option<Value> {
     Some(match e {
         Event::Engaged { peer } => json!({"event": "engaged", "peer": mac_text(peer)}),
         Event::Declined { peer } => json!({"event": "declined", "peer": mac_text(peer)}),
@@ -56,7 +56,7 @@ fn ids(list: &[(u32, u64)]) -> Vec<Value> {
         .collect()
 }
 
-fn report_json(pass: u32, role: Role, r: &Report) -> Value {
+pub(crate) fn report_json(pass: u32, role: Role, r: &Report) -> Value {
     json!({
         "event": "pass",
         "pass": pass,

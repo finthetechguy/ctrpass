@@ -6,3 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+aes = "0.8"
+ccm = "0.5"
+hmac = "0.12"
+sha1 = "0.10"
+thiserror = "2"

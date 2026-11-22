@@ -25,7 +25,7 @@ pub struct Found {
     pub frames: u32,
 }
 
-/// Listens on each channel in turn, reporting a console when first heard or when its probe changes.
+/// Listens on each channel in turn, reporting a console when first heard, when its probe changes, or when its signal is first known.
 pub fn scan(
     radio: &mut dyn Radio,
     channels: &[u8],
@@ -56,9 +56,11 @@ pub fn scan(
                 };
                 match found.iter_mut().find(|f| f.mac == heard.mac) {
                     Some(f) => {
-                        let changed = (f.token, &f.services) != (heard.token, &heard.services);
+                        let changed = (f.token, &f.services) != (heard.token, &heard.services)
+                            || (f.signal.is_none() && heard.signal.is_some());
                         *f = Found {
                             frames: f.frames + 1,
+                            signal: heard.signal.or(f.signal),
                             ..heard
                         };
                         if changed {
@@ -85,6 +87,7 @@ mod tests {
         channel: u8,
         probe: Vec<u8>,
         pending: u32,
+        signal: Option<i8>,
     }
 
     impl Radio for FakeRadio {
@@ -102,8 +105,12 @@ mod tests {
         fn recv(&mut self, _: Duration) -> io::Result<Option<Received>> {
             if self.channel == 6 && self.pending > 0 {
                 self.pending -= 1;
+                let mut info = crate::wifi::radiotap::RxInfo::default();
+                if self.pending == 0 {
+                    info.signal = self.signal;
+                }
                 return Ok(Some(Received {
-                    info: Default::default(),
+                    info,
                     frame: self.probe.clone(),
                 }));
             }
@@ -119,6 +126,7 @@ mod tests {
             channel: 0,
             probe: ie::probe(mac, &[7; 8], &services, 1),
             pending: 0,
+            signal: None,
         };
         let mut reports = 0;
         let found = scan(
@@ -138,5 +146,28 @@ mod tests {
             (mac, Some([7; 8]), Some(6), 4)
         );
         assert_eq!(f.services, services);
+    }
+
+    #[test]
+    fn reports_again_when_signal_arrives() {
+        let mac = [0x96, 0x58, 0xcb, 1, 2, 3];
+        let mut radio = FakeRadio {
+            channel: 0,
+            probe: ie::probe(mac, &[7; 8], &[], 1),
+            pending: 0,
+            signal: Some(-40),
+        };
+        let mut signals = Vec::new();
+        let found = scan(
+            &mut radio,
+            &CHANNELS,
+            Duration::ZERO,
+            2,
+            &AtomicBool::new(false),
+            |f| signals.push(f.signal),
+        )
+        .unwrap();
+        assert_eq!(signals, vec![None, Some(-40)]);
+        assert_eq!(found[0].signal, Some(-40));
     }
 }

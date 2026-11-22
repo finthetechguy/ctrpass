@@ -7,6 +7,8 @@ use ctrpass::streetpass::ie::{self, Discovery, Kind};
 use ctrpass::streetpass::linkkey::{self, Token};
 use ctrpass::wifi::frame::{Header, Mac, TYPE_DATA};
 use ctrpass::wifi::{ccmp, radiotap};
+use ctrpass::yy::Segment;
+use ctrpass::yy::frame::flag_names;
 use serde_json::{Value, json};
 
 use crate::{hex, mac_text};
@@ -80,7 +82,11 @@ pub fn run(path: &Path, keys: Option<&Keys>) -> Result<(), String> {
                     "{}",
                     json!({
                         "t": t, "frame": "data", "from": mac_text(&h.addr2), "to": mac_text(&h.addr1),
-                        "pn": pn, "len": body.len(), "head": hex(&body[..body.len().min(64)]),
+                        "pn": pn, "yy": Segment::parse(&body).map(|y| json!({
+                            "flags": flag_names(y.flags), "seq": y.seq, "ack": y.ack,
+                            "window": y.window, "len": y.payload.len(),
+                            "head": hex(&y.payload[..y.payload.len().min(32)]),
+                        })),
                     })
                 );
             }

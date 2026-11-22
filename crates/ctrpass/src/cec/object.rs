@@ -177,9 +177,7 @@ pub fn parse_message_list(payload: &[u8]) -> Result<Vec<(u32, u32)>, Error> {
         .collect())
 }
 
-/// The objects one side sends: console ID, the type 0x23 object, offer, verdict, message list, envelopes.
-///
-/// An empty `messages` gives the objects of a side that only receives.
+/// The objects one side sends, ending in its envelopes; with no messages, those of a side that only receives.
 pub fn outbox(messages: &[Container], console_id: u64) -> Result<Vec<Vec<u8>>, Error> {
     let mut groups: Vec<(u32, Vec<Container>)> = Vec::new();
     for c in messages {

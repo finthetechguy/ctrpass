@@ -5,6 +5,7 @@ pub mod keys;
 pub mod radio;
 pub mod streetpass;
 pub mod wifi;
+pub mod yy;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

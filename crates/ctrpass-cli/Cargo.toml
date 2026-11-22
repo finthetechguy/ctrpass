@@ -1,0 +1,13 @@
+[package]
+name = "ctrpass-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ctrpass"
+path = "src/main.rs"
+
+[dependencies]
+ctrpass = { path = "../ctrpass" }

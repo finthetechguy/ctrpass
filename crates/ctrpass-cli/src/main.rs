@@ -71,6 +71,8 @@ enum Command {
         /// Take over the interface even if it is connected to a network.
         #[arg(long)]
         force: bool,
+        #[arg(long, value_enum, default_value_t = RadioMode::Auto)]
+        radio_mode: RadioMode,
     },
     /// Manage the messages, titles and identity in the store.
     Store {
@@ -117,26 +119,33 @@ fn found_json(f: &ctrpass::scan::Found) -> serde_json::Value {
     })
 }
 
+/// How the card is set up for exchanging.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum RadioMode {
+    /// Active monitor when the card supports it, mixed mode otherwise.
+    Auto,
+    Active,
+    /// A plain monitor and a station interface, on channel 1 only.
+    Mixed,
+}
+
 #[cfg(target_os = "linux")]
 fn open_radio(
     interface: &str,
     mac: Option<ctrpass::wifi::frame::Mac>,
     force: bool,
+    mode: Option<ctrpass::radio::linux::Mode>,
 ) -> Result<ctrpass::radio::linux::LinuxRadio, String> {
-    let radio = ctrpass::radio::linux::LinuxRadio::open(interface, mac, force).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::PermissionDenied
-            || e.to_string().contains("Operation not permitted")
-        {
-            format!("{e} (needs root or CAP_NET_ADMIN and CAP_NET_RAW)")
-        } else {
-            e.to_string()
-        }
-    })?;
-    if !radio.capabilities.active_monitor {
-        eprintln!(
-            "ctrpass: {interface} cannot acknowledge frames in monitor mode; scanning works, exchanging needs mixed mode"
-        );
-    }
+    let radio =
+        ctrpass::radio::linux::LinuxRadio::open(interface, mac, force, mode).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied
+                || e.to_string().contains("Operation not permitted")
+            {
+                format!("{e} (needs root or CAP_NET_ADMIN and CAP_NET_RAW)")
+            } else {
+                e.to_string()
+            }
+        })?;
     Ok(radio)
 }
 
@@ -158,7 +167,12 @@ fn run(cli: Cli) -> Result<(), String> {
             rounds,
             force,
         } => {
-            let mut radio = open_radio(&interface, None, force)?;
+            let mut radio = open_radio(
+                &interface,
+                None,
+                force,
+                Some(ctrpass::radio::linux::Mode::Listen),
+            )?;
             let found = ctrpass::scan::scan(
                 &mut radio,
                 &channels,
@@ -181,12 +195,24 @@ fn run(cli: Cli) -> Result<(), String> {
             window,
             passes,
             force,
+            radio_mode,
         } => {
+            use ctrpass::radio::linux::Mode;
             let keys = load_keys(&cli.keys)?;
             let path = cli.store.map_or_else(store::default_path, Ok)?;
             let mut store = ctrpass::store::Store::open(&path).map_err(|e| e.to_string())?;
             let mac = store.identity().map_err(|e| e.to_string())?.mac;
-            let mut radio = open_radio(&interface, Some(mac), force)?;
+            let mode = match radio_mode {
+                RadioMode::Auto => None,
+                RadioMode::Active => Some(Mode::Active),
+                RadioMode::Mixed => Some(Mode::Mixed),
+            };
+            let mut radio = open_radio(&interface, Some(mac), force, mode)?;
+            let mut channels = channels;
+            if let Some(fixed) = radio.fixed_channel() {
+                eprintln!("ctrpass: {interface} is in mixed mode, so only channel {fixed} is used");
+                channels = vec![fixed];
+            }
             let opts = exchange::Options {
                 role,
                 channels,

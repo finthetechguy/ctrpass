@@ -1,4 +1,8 @@
 //! Linux backend: a monitor interface driven through `iw` and a raw packet socket.
+//!
+//! A card with active monitor support sends, listens and acknowledges on one monitor interface.
+//! Without it, a plain monitor sends and listens while an unassociated station interface holds the
+//! address so the card acknowledges frames sent to it, which keeps the card on channel 1.
 
 use std::ffi::CString;
 use std::io;
@@ -20,6 +24,20 @@ pub struct Capabilities {
     /// The card acknowledges unicast frames sent to a monitor interface.
     pub active_monitor: bool,
 }
+
+/// How the card is set up to both inject frames and acknowledge those sent to it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// One monitor interface that acknowledges frames for its own address.
+    Active,
+    /// A plain monitor beside a station interface that carries the address, fixed to channel 1.
+    Mixed,
+    /// A plain monitor that only listens and sends broadcasts, on any channel.
+    Listen,
+}
+
+/// The only channel a card in mixed mode can use.
+pub const MIXED_CHANNEL: u8 = 1;
 
 fn run(program: &str, args: &[&str]) -> io::Result<String> {
     let out = Command::new(program)
@@ -112,6 +130,20 @@ fn tuner_name(monitor: &str) -> String {
     format!("{monitor}t")
 }
 
+fn station_name(monitor: &str) -> String {
+    format!("{monitor}s")
+}
+
+fn delete_helpers(monitor: &str) {
+    for name in [
+        monitor.to_string(),
+        tuner_name(monitor),
+        station_name(monitor),
+    ] {
+        let _ = run("iw", &["dev", &name, "del"]);
+    }
+}
+
 fn read_mac(interface: &str) -> io::Result<Mac> {
     let s = std::fs::read_to_string(format!("/sys/class/net/{interface}/address"))?;
     let bytes: Vec<u8> = s
@@ -142,8 +174,7 @@ struct Restore {
 
 impl Drop for Restore {
     fn drop(&mut self) {
-        let _ = run("iw", &["dev", &self.monitor, "del"]);
-        let _ = run("iw", &["dev", &tuner_name(&self.monitor), "del"]);
+        delete_helpers(&self.monitor);
         if self.iwd_off {
             iwd_power(&self.interface, true);
         }
@@ -164,6 +195,7 @@ pub struct LinuxRadio {
     monitor: String,
     mac: Mac,
     pub capabilities: Capabilities,
+    pub mode: Mode,
     _restore: Restore,
     /// Released last, after the card has been restored.
     _lock: std::fs::File,
@@ -171,7 +203,14 @@ pub struct LinuxRadio {
 
 impl LinuxRadio {
     /// Takes over the card behind `interface` until dropped, answering as `mac` and refusing a connected card unless forced.
-    pub fn open(interface: &str, mac: Option<Mac>, force: bool) -> io::Result<Self> {
+    ///
+    /// Without a `mode`, active monitor is used when the card supports it and mixed mode otherwise.
+    pub fn open(
+        interface: &str,
+        mac: Option<Mac>,
+        force: bool,
+        mode: Option<Mode>,
+    ) -> io::Result<Self> {
         if !force && !run("iw", &["dev", interface, "link"])?.starts_with("Not connected") {
             return Err(io::Error::other(format!(
                 "{interface} is connected to a network; use another card or force it"
@@ -183,11 +222,20 @@ impl LinuxRadio {
                 "{interface} does not support monitor mode"
             )));
         }
+        let mode = mode.unwrap_or(if caps.active_monitor {
+            Mode::Active
+        } else {
+            Mode::Mixed
+        });
+        if mode == Mode::Active && !caps.active_monitor {
+            return Err(io::Error::other(format!(
+                "{interface} does not support active monitor; use mixed mode"
+            )));
+        }
         let phy = phy_of(interface)?;
         let lock = lock_phy(phy)?;
         let monitor = format!("ctrpass{phy}");
-        let _ = run("iw", &["dev", &monitor, "del"]);
-        let _ = run("iw", &["dev", &tuner_name(&monitor), "del"]);
+        delete_helpers(&monitor);
 
         let mut restore = Restore {
             interface: interface.into(),
@@ -201,47 +249,18 @@ impl LinuxRadio {
         }
         restore.iwd_off = iwd_power(interface, false);
         let phy_name = format!("phy{phy}");
-        let mut args = vec![
-            "phy",
-            &phy_name,
-            "interface",
-            "add",
-            &monitor,
-            "type",
-            "monitor",
-        ];
-        if caps.active_monitor {
-            args.extend(["flags", "active"]);
-        }
-        run("iw", &args)?;
-        run("ip", &["link", "set", &monitor, "down"])?;
-        if let Some(mac) = mac {
-            run("ip", &["link", "set", &monitor, "address", &mac_text(&mac)])?;
-        }
-        run("ip", &["link", "set", &monitor, "mtu", MTU])?;
         run("ip", &["link", "set", interface, "down"])?;
-        // An active monitor gets no channel of its own, so a plain one must be up first to hold it.
-        let tuner = tuner_name(&monitor);
-        run(
-            "iw",
-            &[
-                "phy",
-                &phy_name,
-                "interface",
-                "add",
-                &tuner,
-                "type",
-                "monitor",
-            ],
-        )?;
-        run("ip", &["link", "set", &tuner, "up"])?;
-        run("ip", &["link", "set", &monitor, "up"])?;
+        let addressed = match mode {
+            Mode::Active => start_active(&phy_name, &monitor, mac)?,
+            Mode::Mixed => start_mixed(&phy_name, &monitor, mac)?,
+            Mode::Listen => start_listen(&phy_name, &monitor)?,
+        };
 
         let fd = open_socket(&monitor)?;
-        let actual = read_mac(&monitor)?;
+        let actual = read_mac(&addressed)?;
         if mac.is_some_and(|m| m != actual) {
             return Err(io::Error::other(format!(
-                "{monitor} kept address {} instead of the one requested",
+                "{addressed} kept address {} instead of the one requested",
                 mac_text(&actual)
             )));
         }
@@ -251,9 +270,91 @@ impl LinuxRadio {
             monitor,
             mac: actual,
             capabilities: caps,
+            mode,
             _restore: restore,
         })
     }
+
+    /// The one channel this radio can tune to, or `None` for any.
+    pub fn fixed_channel(&self) -> Option<u8> {
+        (self.mode == Mode::Mixed).then_some(MIXED_CHANNEL)
+    }
+}
+
+/// Brings up an active monitor holding `mac`, returning the interface that carries the address.
+fn start_active(phy: &str, monitor: &str, mac: Option<Mac>) -> io::Result<String> {
+    run(
+        "iw",
+        &[
+            "phy",
+            phy,
+            "interface",
+            "add",
+            monitor,
+            "type",
+            "monitor",
+            "flags",
+            "active",
+        ],
+    )?;
+    run("ip", &["link", "set", monitor, "down"])?;
+    if let Some(mac) = mac {
+        run("ip", &["link", "set", monitor, "address", &mac_text(&mac)])?;
+    }
+    run("ip", &["link", "set", monitor, "mtu", MTU])?;
+    // An active monitor gets no channel of its own, so a plain one must be up first to hold it.
+    let tuner = tuner_name(monitor);
+    run(
+        "iw",
+        &["phy", phy, "interface", "add", &tuner, "type", "monitor"],
+    )?;
+    run("ip", &["link", "set", &tuner, "up"])?;
+    run("ip", &["link", "set", monitor, "up"])?;
+    Ok(monitor.to_string())
+}
+
+fn start_listen(phy: &str, monitor: &str) -> io::Result<String> {
+    run(
+        "iw",
+        &["phy", phy, "interface", "add", monitor, "type", "monitor"],
+    )?;
+    run("ip", &["link", "set", monitor, "mtu", MTU])?;
+    run("ip", &["link", "set", monitor, "up"])?;
+    Ok(monitor.to_string())
+}
+
+fn station_up(station: &str, mac: Option<Mac>) -> io::Result<()> {
+    run("ip", &["link", "set", station, "down"])?;
+    if let Some(mac) = mac {
+        run("ip", &["link", "set", station, "address", &mac_text(&mac)])?;
+    }
+    run("ip", &["link", "set", station, "up"])?;
+    Ok(())
+}
+
+/// Brings up a plain monitor and a station interface holding `mac`, returning the station.
+fn start_mixed(phy: &str, monitor: &str, mac: Option<Mac>) -> io::Result<String> {
+    run(
+        "iw",
+        &["phy", phy, "interface", "add", monitor, "type", "monitor"],
+    )?;
+    run("ip", &["link", "set", monitor, "mtu", MTU])?;
+    run("ip", &["link", "set", monitor, "up"])?;
+    let station = station_name(monitor);
+    run(
+        "iw",
+        &["phy", phy, "interface", "add", &station, "type", "managed"],
+    )?;
+    if nm_state(&station).is_some() {
+        let _ = run("nmcli", &["device", "set", &station, "managed", "no"]);
+    }
+    station_up(&station, mac)?;
+    // A network manager may take a new station down or reset its address shortly after it appears.
+    std::thread::sleep(Duration::from_secs(1));
+    if !is_up(&station) || mac.is_some_and(|m| read_mac(&station).ok() != Some(m)) {
+        station_up(&station, mac)?;
+    }
+    Ok(station)
 }
 
 /// Holds an exclusive lock on the card so a second instance cannot take it over.
@@ -307,6 +408,15 @@ impl Radio for LinuxRadio {
     }
 
     fn set_channel(&mut self, channel: u8) -> io::Result<()> {
+        if let Some(fixed) = self.fixed_channel() {
+            return if channel == fixed {
+                Ok(())
+            } else {
+                Err(io::Error::other(format!(
+                    "mixed mode stays on channel {fixed}, not {channel}"
+                )))
+            };
+        }
         run(
             "iw",
             &["dev", &self.monitor, "set", "channel", &channel.to_string()],

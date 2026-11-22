@@ -11,6 +11,7 @@ mod exchange;
 mod info;
 mod plaza;
 mod store;
+mod title;
 
 #[derive(Parser)]
 #[command(
@@ -79,6 +80,11 @@ enum Command {
     Plaza {
         #[command(subcommand)]
         action: plaza::Action,
+    },
+    /// Build and read messages for any title ctrpass knows the fields of.
+    Title {
+        #[command(subcommand)]
+        action: title::Action,
     },
     /// Manage the messages, titles and identity in the store.
     Store {
@@ -250,6 +256,26 @@ fn run(cli: Cli) -> Result<(), String> {
                     icon_out.as_deref(),
                     mii_out.as_deref(),
                 )
+            }
+        },
+        Command::Title { action } => match action {
+            title::Action::List => {
+                title::list();
+                Ok(())
+            }
+            title::Action::Show { file, images } => {
+                let keys = optional_keys(&cli.keys)?;
+                title::show(&file, keys.as_ref(), images.as_deref())
+            }
+            title::Action::Build(args) => {
+                let keys = load_keys(&cli.keys)?;
+                let t = ctrpass::title::find(&args.title)
+                    .ok_or_else(|| format!("no title {:?}; see title list", args.title))?;
+                let store = match &args.common.from {
+                    Some(_) => None,
+                    None => Some(cli.store.map_or_else(store::default_path, Ok)?),
+                };
+                title::build(t, &args.common, &keys, store.as_deref())
             }
         },
         Command::Store { action } => {

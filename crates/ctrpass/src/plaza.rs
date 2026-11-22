@@ -3,10 +3,8 @@
 use serde::Serialize;
 
 use crate::Error;
-use crate::cec::Container;
-use crate::cec::container::{Draft, EXT_ICON, EXT_INFO_TEXT, ICON_LEN, Timestamp, info_text};
 use crate::cec::icon::Icon;
-use crate::keys::{Key, TitleKey};
+use crate::keys::Key;
 use crate::mii::{self, Record, WRAPPED_SIZE};
 
 pub const TITLE: u32 = 0x0002_0800;
@@ -15,7 +13,6 @@ pub const BODY_LEN: usize = 0x7280;
 pub const OLD_BODY_LEN: usize = 0x60f0;
 /// The Plaza sends and receives in the same exchange.
 pub const SEND_MODE: u8 = 0;
-const FLAGS: u8 = 3;
 
 pub const LANGUAGES: usize = 16;
 /// A title ID in the application category with no title of its own.
@@ -420,34 +417,10 @@ impl Plaza {
         }
         out
     }
-
-    /// Wraps the body in a signed message the Plaza accepts.
-    pub fn message(
-        &self,
-        key: &TitleKey,
-        message_id: u64,
-        created: Timestamp,
-        icon: &Icon,
-        text: &str,
-    ) -> Result<Container, Error> {
-        if icon.size != 40 {
-            return Err(Error::Format("a message icon is 40x40".into()));
-        }
-        let icon = icon.encode();
-        debug_assert_eq!(icon.len(), ICON_LEN);
-        let text = info_text(text);
-        Draft {
-            title: TITLE,
-            body: &self.body,
-            ext_headers: &[(EXT_ICON, &icon), (EXT_INFO_TEXT, &text)],
-            message_id,
-            created,
-            send_mode: SEND_MODE,
-            flags: FLAGS,
-        }
-        .build(key)
-    }
 }
+
+mod title;
+pub use title::PlazaTitle;
 
 #[cfg(test)]
 mod tests;

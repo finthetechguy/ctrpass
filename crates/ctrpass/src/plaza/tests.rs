@@ -1,4 +1,5 @@
 use super::*;
+use crate::keys::TitleKey;
 
 const RECORD_KEY: Key = [0x31; 16];
 const TITLE_KEY: TitleKey = [0x08; 32];
@@ -94,17 +95,35 @@ fn history_lists_set_entries() {
 
 #[test]
 fn message_is_signed_plaza_message() {
-    let c = plaza()
-        .message(
-            &TITLE_KEY,
-            5,
-            Timestamp::from_unix(1_700_000_000, 0),
-            &Icon::standard(40),
-            "Hello",
-        )
-        .unwrap();
+    let c = crate::title::message(
+        &PlazaTitle,
+        plaza().as_bytes(),
+        &TITLE_KEY,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     assert_eq!((c.title(), c.send_mode(), c.flags()), (TITLE, SEND_MODE, 3));
     assert!(c.verify(&TITLE_KEY));
-    assert_eq!(c.ext_header(EXT_ICON).map(<[u8]>::len), Some(ICON_LEN));
+    assert_eq!(
+        c.ext_header(crate::cec::container::EXT_ICON),
+        Some(&Icon::standard(40).encode()[..])
+    );
+    assert_eq!(
+        crate::title::message_text(&c).as_deref(),
+        Some("A visitor arrived")
+    );
+    let again = crate::title::message(
+        &PlazaTitle,
+        c.body(),
+        &TITLE_KEY,
+        Some(&c),
+        None,
+        Some("Hi"),
+    )
+    .unwrap();
+    assert_ne!(again.message_id(), c.message_id());
+    assert_eq!(crate::title::message_text(&again).as_deref(), Some("Hi"));
     assert_eq!(Plaza::parse(c.body()).unwrap(), plaza());
 }

@@ -262,7 +262,6 @@ dependencies = [
  "clap",
  "ctrlc",
  "ctrpass",
- "getrandom 0.3.4",
  "png",
  "serde_json",
 ]

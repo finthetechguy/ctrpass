@@ -13,6 +13,7 @@ pub mod scan;
 mod sim;
 pub mod store;
 pub mod streetpass;
+pub mod title;
 pub mod wifi;
 pub mod yy;
 

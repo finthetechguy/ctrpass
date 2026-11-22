@@ -4,6 +4,7 @@ import time
 
 from gi.repository import Adw, GLib, Gtk
 
+from . import autostart
 from .fields import title_name
 from .interfaces import wireless_interfaces
 from .settings import MODES
@@ -82,10 +83,19 @@ class ExchangePage(Gtk.Stack):
         self.status_page.set_child(stop)
         box.append(self.status_page)
         clamp = Adw.Clamp(maximum_size=600, margin_start=12, margin_end=12)
+        lists = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        options = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        options.add_css_class("boxed-list")
+        self.background_row = Adw.SwitchRow(title="Run in background", subtitle="Keep StreetPass on after closing the window",
+                                            active=self.window.settings.background)
+        self.background_row.connect("notify::active", self.background_changed)
+        options.append(self.background_row)
+        lists.append(options)
         self.live = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.live.add_css_class("boxed-list")
         self.live.set_visible(False)
-        clamp.set_child(self.live)
+        lists.append(self.live)
+        clamp.set_child(lists)
         box.append(clamp)
         return Gtk.ScrolledWindow(child=box, hscrollbar_policy=Gtk.PolicyType.NEVER)
 
@@ -114,6 +124,19 @@ class ExchangePage(Gtk.Stack):
         self.window.settings.mode = self.mode()
         self.window.settings.save()
 
+    def background_changed(self, *_):
+        settings = self.window.settings
+        settings.background = self.background_row.get_active()
+        if not settings.background and autostart.enabled():
+            try:
+                autostart.set_enabled(False)
+            except OSError as e:
+                self.window.toast(f"Can't change login startup: {e}")
+        settings.save()
+
+    def sync_background(self):
+        self.background_row.set_active(self.window.settings.background)
+
     # State from the helper
 
     def set_state(self, state):
@@ -123,6 +146,7 @@ class ExchangePage(Gtk.Stack):
         self.iface_row.set_sensitive(not scanning)
         self.mode_row.set_sensitive(not scanning)
         if state == "exchanging":
+            self.sync_background()
             self.status("Looking for consoles")
             self.set_visible_child_name("running")
         elif state == "idle":

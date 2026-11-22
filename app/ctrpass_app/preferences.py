@@ -143,6 +143,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         if not self.settings.background and self.login_row.get_active():
             self.login_row.set_active(False)
         self.saved()
+        self.window.exchange_page.sync_background()
 
     def login_changed(self, *_):
         on = self.login_row.get_active()

@@ -8,6 +8,7 @@ use ctrpass::keys::Keys;
 
 mod decode;
 mod info;
+mod store;
 
 #[derive(Parser)]
 #[command(
@@ -19,6 +20,9 @@ struct Cli {
     /// Key file; defaults to $CTRPASS_KEYS.
     #[arg(long, global = true)]
     keys: Option<PathBuf>,
+    /// Store folder; defaults to $CTRPASS_STORE, then the per-user data folder.
+    #[arg(long, global = true)]
+    store: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -46,6 +50,11 @@ enum Command {
         /// Take over the interface even if it is connected to a network.
         #[arg(long)]
         force: bool,
+    },
+    /// Manage the messages, titles and identity in the store.
+    Store {
+        #[command(subcommand)]
+        action: store::Action,
     },
 }
 
@@ -139,6 +148,11 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         #[cfg(not(target_os = "linux"))]
         Command::Scan { .. } => Err("scanning needs Linux".into()),
+        Command::Store { action } => {
+            let keys = optional_keys(&cli.keys)?;
+            let path = cli.store.map_or_else(store::default_path, Ok)?;
+            store::run(&path, action, keys.as_ref())
+        }
     }
 }
 

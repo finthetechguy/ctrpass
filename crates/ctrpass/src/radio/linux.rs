@@ -192,6 +192,7 @@ impl Drop for Restore {
 
 pub struct LinuxRadio {
     fd: OwnedFd,
+    started: Instant,
     monitor: String,
     mac: Mac,
     pub capabilities: Capabilities,
@@ -266,6 +267,7 @@ impl LinuxRadio {
         }
         Ok(LinuxRadio {
             fd,
+            started: Instant::now(),
             _lock: lock,
             monitor,
             mac: actual,
@@ -475,7 +477,10 @@ impl Radio for LinuxRadio {
             if addr.sll_pkttype == PACKET_OUTGOING {
                 continue;
             }
-            if let Ok((info, frame)) = radiotap::parse(&buf[..n as usize]) {
+            if let Ok((mut info, frame)) = radiotap::parse(&buf[..n as usize]) {
+                if self.started.elapsed() < super::SIGNAL_SETTLE {
+                    info.signal = None;
+                }
                 if !info.bad_fcs {
                     return Ok(Some(Received {
                         info,

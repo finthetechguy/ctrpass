@@ -10,6 +10,9 @@ use crate::wifi::radiotap::RxInfo;
 pub mod linux;
 pub mod pcap;
 
+/// How long a backend leaves out signal readings after the card starts, while drivers that calibrate their noise floor settle.
+pub const SIGNAL_SETTLE: Duration = Duration::from_secs(3);
+
 /// Start of the names given to interfaces made for StreetPass.
 pub const INTERFACE_PREFIX: &str = "ctrpass";
 

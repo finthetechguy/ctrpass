@@ -1,10 +1,12 @@
 """The preferences dialog: key file, store folder and how the card is used."""
 
+from datetime import datetime
+
 import ctrpass
 from gi.repository import Adw, GLib, Gtk
 
 from . import autostart
-from .settings import RADIOS
+from .settings import CLEAR_HOURS_MAX, RADIOS
 
 RADIO_NAMES = {"auto": "Automatic", "active": "Standard", "mixed": "Compatibility"}
 RADIO_HELP = {
@@ -40,6 +42,21 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self.radio_row.connect("notify::selected", self.radio_changed)
         card.add(self.radio_row)
         page.add(card)
+
+        passed = Adw.PreferencesGroup(title="Passed Consoles",
+                                      description="Clearing lets passed consoles pass again and changes the MAC address.")
+        self.hours_row = Adw.SpinRow.new_with_range(1, CLEAR_HOURS_MAX, 1)
+        self.hours_row.set_title("Clear every")
+        self.hours_row.set_subtitle("Hours")
+        self.hours_row.set_value(self.settings.clear_hours)
+        self.hours_row.connect("notify::value", self.hours_changed)
+        passed.add(self.hours_row)
+        self.clear_row = Adw.ActionRow(title="Clear now")
+        clear = Gtk.Button(label="Clear", valign=Gtk.Align.CENTER)
+        clear.connect("clicked", self.clear_now)
+        self.clear_row.add_suffix(clear)
+        passed.add(self.clear_row)
+        page.add(passed)
 
         background = Adw.PreferencesGroup(title="Background")
         self.background_row = Adw.SwitchRow(title="Run in background", subtitle="Keep StreetPass on after closing the window",
@@ -77,6 +94,23 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self.keys_row.set_subtitle(GLib.markup_escape_text(f"{self.settings.keys_path or '—'}\n{status}"))
         self.store_row.set_subtitle(GLib.markup_escape_text(self.settings.store))
         self.radio_row.set_subtitle(RADIO_HELP[self.settings.radio])
+        self.update_cleared()
+
+    def update_cleared(self):
+        try:
+            when = self.window.store.rotated() if self.window.store else None
+        except (ValueError, OSError):
+            when = None
+        text = "Not cleared yet" if when is None else "Last cleared " + datetime.fromtimestamp(when).strftime("%d %b, %H:%M")
+        self.clear_row.set_subtitle(text)
+
+    def hours_changed(self, *_):
+        self.settings.clear_hours = int(self.hours_row.get_value())
+        self.saved()
+
+    def clear_now(self, _button):
+        self.window.clear_passed()
+        GLib.timeout_add(1500, lambda: (self.update_cleared(), False)[1])
 
     def choose_keys(self):
         def done(d, result):

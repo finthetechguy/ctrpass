@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -36,6 +37,7 @@ class Window(Adw.ApplicationWindow):
         self.peer = None
         self.summaries = {}
         self.quitting = False
+        self.clear_asked = False
 
         self.toasts = Adw.ToastOverlay()
         stack = Adw.ViewStack()
@@ -290,7 +292,23 @@ class Window(Adw.ApplicationWindow):
             return
         try:
             self.helper.load_store(self.store.snapshot())
-            self.helper.exchange(role=self.settings.mode, radio=self.settings.radio)
+            self.helper.exchange(role=self.settings.mode, radio=self.settings.radio,
+                                 rotate_every=self.settings.clear_hours * 3600)
+        except (RuntimeError, OSError, ValueError) as e:
+            self.toast(str(e))
+
+    def clear_passed(self):
+        """Lets passed consoles pass again and changes the MAC, through the helper while it exchanges."""
+        if self.store is None:
+            self.toast("The messages folder can't be opened")
+            return
+        try:
+            if self.helper.running and self.state == "exchanging":
+                self.clear_asked = True
+                self.helper.rotate()
+            else:
+                self.store.rotate()
+                self.toast("Passed consoles cleared")
         except (RuntimeError, OSError, ValueError) as e:
             self.toast(str(e))
 
@@ -369,6 +387,12 @@ class Window(Adw.ApplicationWindow):
             page.status("Looking for consoles")
         elif kind == "pass":
             self.on_pass(e)
+        elif kind == "rotated":
+            if self.store and e.get("peers") is not None:
+                self.store.set_peers(json.dumps(e["peers"]))
+            if self.clear_asked:
+                self.clear_asked = False
+                self.toast("Passed consoles cleared")
         elif kind == "found":
             page.found(e["console"])
         elif kind == "error":

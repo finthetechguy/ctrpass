@@ -30,6 +30,8 @@ for line in sys.stdin:
              refused=[], received=[], not_filed=[], messages=[], peers={"filter": ["96:58:cb:00:00:01"]})
         if cmd.get("passes") == 1:
             emit(event="state", state="idle")
+    elif kind == "rotate":
+        emit(event="rotated", mac="02:00:00:00:00:02", peers={"filter": [], "mac": "02:00:00:00:00:02"})
     elif kind == "stop":
         emit(event="state", state="idle")
     elif kind == "quit":

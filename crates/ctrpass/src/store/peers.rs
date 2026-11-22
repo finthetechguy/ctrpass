@@ -1,9 +1,10 @@
-//! What each peer MAC has exchanged, the MAC filter, and blocked MACs.
+//! What each peer MAC has exchanged, the MAC filter with the MAC it belongs to, and blocked MACs.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,8 @@ use crate::wifi::frame::Mac;
 pub const FILTER_MAX: usize = 255;
 /// Seconds to wait before engaging a peer again after an exchange that did not finish.
 pub const RETRY: u64 = 60;
+/// How often a console changes its MAC and clears its filter.
+pub const ROTATE_EVERY: Duration = Duration::from_secs(8 * 60 * 60);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Peer {
@@ -42,6 +45,12 @@ struct Book {
     /// MACs that completed an exchange, refused until removed or pushed out.
     #[serde(default)]
     filter: Vec<String>,
+    /// The MAC presented since the filter was last cleared, replacing the one from the identity seed.
+    #[serde(default)]
+    mac: Option<String>,
+    /// When the MAC last changed and the filter was cleared, in Unix seconds; 0 before the first time.
+    #[serde(default)]
+    rotated: u64,
 }
 
 pub struct PeerBook {
@@ -54,6 +63,15 @@ pub(crate) fn check(v: &serde_json::Value) -> Result<(), Error> {
     Book::deserialize(v)
         .map(|_| ())
         .map_err(|e| Error::Format(format!("peer book: {e}")))
+}
+
+fn parse_mac(s: &str) -> Option<Mac> {
+    let parts: Vec<u8> = s
+        .split(':')
+        .map(|p| u8::from_str_radix(p, 16))
+        .collect::<Result<_, _>>()
+        .ok()?;
+    parts.try_into().ok()
 }
 
 pub fn mac_key(mac: &Mac) -> String {
@@ -89,6 +107,42 @@ impl PeerBook {
 
     pub fn peer(&self, mac: &Mac) -> Option<&Peer> {
         self.book.peers.get(&mac_key(mac))
+    }
+
+    /// The MAC chosen at the last rotation, if there was one.
+    pub fn mac(&self) -> Option<Mac> {
+        self.book.mac.as_deref().and_then(parse_mac)
+    }
+
+    /// When the last rotation happened, in Unix seconds, or `None` before the first.
+    pub fn rotated(&self) -> Option<u64> {
+        (self.book.rotated > 0).then_some(self.book.rotated)
+    }
+
+    /// Changes the MAC, clears the filter and forgets what each console was sent, so consoles passed before get a full pass again.
+    pub fn rotate(&mut self, now: u64) -> Result<Mac, Error> {
+        let mac = crate::identity::random_mac()?;
+        self.book.mac = Some(mac_key(&mac));
+        self.book.filter.clear();
+        for p in self.book.peers.values_mut() {
+            p.sent.clear();
+        }
+        self.book.rotated = now;
+        self.save()?;
+        Ok(mac)
+    }
+
+    /// Rotates when `every` has passed since the last rotation, starting the clock on first use.
+    pub fn rotate_if_due(&mut self, every: Duration, now: u64) -> Result<Option<Mac>, Error> {
+        if self.book.rotated == 0 {
+            self.book.rotated = now;
+            self.save()?;
+            return Ok(None);
+        }
+        if now.saturating_sub(self.book.rotated) < every.as_secs() {
+            return Ok(None);
+        }
+        self.rotate(now).map(Some)
     }
 
     pub fn filter(&self) -> &[String] {

@@ -248,3 +248,31 @@ fn peer_book() {
     assert_eq!(book.forget(None).unwrap(), peers::FILTER_MAX + 1);
     assert!(book.unblock(&PEER).unwrap());
 }
+
+#[test]
+fn rotation_changes_mac_and_clears_filter() {
+    let d = dir();
+    let store = Store::open(d.path()).unwrap();
+    let seeded = store.identity().unwrap();
+    let every = std::time::Duration::from_secs(100);
+    let mut book = store.peer_book().unwrap();
+    book.record(&PEER, &[1], &[2], 10).unwrap();
+    assert_eq!(book.rotate_if_due(every, 1000).unwrap(), None);
+    assert_eq!(book.rotated(), Some(1000));
+    assert_eq!(book.rotate_if_due(every, 1099).unwrap(), None);
+    let mac = book.rotate_if_due(every, 1100).unwrap().unwrap();
+    assert_eq!(mac[0] & 3, 2);
+    assert!(book.filter().is_empty() && !book.is_filtered(&PEER));
+    assert!(!book.already_sent(&PEER, 1));
+    assert!(book.came_from(&PEER, 2));
+    assert_eq!(book.peer(&PEER).unwrap().exchanges, 1);
+
+    let id = store.identity().unwrap();
+    assert_eq!(id.mac, mac);
+    assert_eq!(id.mii_id, seeded.mii_id);
+    assert_ne!(id.mac, seeded.mac);
+
+    let again = store.peer_book().unwrap().rotate(1200).unwrap();
+    assert_ne!(again, mac);
+    assert_eq!(store.peer_book().unwrap().rotated(), Some(1200));
+}

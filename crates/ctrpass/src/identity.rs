@@ -31,10 +31,22 @@ pub fn random_seed() -> std::io::Result<Seed> {
     Ok(seed)
 }
 
+/// Makes six bytes a locally assigned, single-device MAC.
+pub fn local_mac(bytes: [u8; 6]) -> Mac {
+    let mut mac = bytes;
+    mac[0] = (mac[0] & 0xfc) | 0x02;
+    mac
+}
+
+pub fn random_mac() -> std::io::Result<Mac> {
+    let mut b = [0u8; 6];
+    getrandom::fill(&mut b).map_err(|e| std::io::Error::other(e.to_string()))?;
+    Ok(local_mac(b))
+}
+
 impl Identity {
     pub fn from_seed(seed: &Seed) -> Self {
-        let mut mac: Mac = seed[0..6].try_into().unwrap();
-        mac[0] = (mac[0] & 0xfc) | 0x02;
+        let mac = local_mac(seed[0..6].try_into().unwrap());
         let mut creator_mac: Mac = seed[6..12].try_into().unwrap();
         creator_mac[0] &= 0xfc;
         // The Plaza drops a Mii whose ID has bit 5 set, and console-made IDs start with 0x9.

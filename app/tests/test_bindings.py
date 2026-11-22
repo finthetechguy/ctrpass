@@ -61,6 +61,16 @@ class BindingsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.b.set_peers('{"filter": 3}')
 
+    def test_rotate_clears_filter(self):
+        self.a.set_peers(json.dumps({"filter": ["96:58:cb:00:00:01"]}))
+        before = self.a.identity()
+        self.assertIsNone(self.a.rotated())
+        mac = self.a.rotate()
+        self.assertNotEqual(mac, before["mac"])
+        self.assertEqual(self.a.identity(), {"mac": mac, "mii_id": before["mii_id"]})
+        self.assertIsNotNone(self.a.rotated())
+        self.assertEqual(json.loads(self.a.snapshot())["peers"]["filter"], [])
+
     def test_export_into_a_cec_folder(self):
         msg = ctrpass.build_message(PLAZA, {}, KEYS, seed=self.a.seed)
         self.a.add_title(PLAZA, None, bytes([7] * 32))

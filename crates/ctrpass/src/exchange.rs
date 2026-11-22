@@ -342,6 +342,19 @@ impl Host for StoreHost<'_> {
     }
 }
 
+/// Changes the store's MAC and clears its filter when `every` has passed, returning the new MAC.
+pub fn rotate_if_due(store: &Store, every: Option<Duration>) -> Result<Option<Mac>, Error> {
+    match every {
+        Some(every) => store.peer_book()?.rotate_if_due(every, now_secs()),
+        None => Ok(None),
+    }
+}
+
+/// Changes the store's MAC and clears its filter now.
+pub fn rotate_now(store: &Store) -> Result<Mac, Error> {
+    store.peer_book()?.rotate(now_secs())
+}
+
 pub struct PassConfig {
     pub role: Role,
     pub channels: Vec<u8>,

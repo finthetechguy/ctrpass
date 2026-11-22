@@ -69,6 +69,8 @@ pub enum Action {
         #[arg(value_enum)]
         state: Switch,
     },
+    /// Change the MAC and clear the filter now, so passed consoles can pass again.
+    Rotate,
     /// Print the identity the store presents.
     Identity {
         /// Replace it with a new random one first.
@@ -199,10 +201,15 @@ pub fn run(path: &Path, action: Action, keys: Option<&Keys>) -> Result<(), Strin
             }
             store.set_receive(title, on).map_err(e)?;
         }
+        Action::Rotate => {
+            let mac = ctrpass::exchange::rotate_now(&store).map_err(e)?;
+            println!("{}", json!({ "mac": mac_text(&mac) }));
+        }
         Action::Identity { new } => {
             if new {
                 let seed = ctrpass::identity::random_seed().map_err(|err| err.to_string())?;
                 store.set_seed(&seed).map_err(e)?;
+                ctrpass::exchange::rotate_now(&store).map_err(e)?;
             }
             let id = store.identity().map_err(e)?;
             println!(

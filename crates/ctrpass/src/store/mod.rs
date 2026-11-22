@@ -849,8 +849,13 @@ impl Store {
         Ok(())
     }
 
+    /// The identity from the seed, with the MAC from the last rotation when there was one.
     pub fn identity(&self) -> Result<crate::identity::Identity, Error> {
-        Ok(crate::identity::Identity::from_seed(&self.seed()?))
+        let mut id = crate::identity::Identity::from_seed(&self.seed()?);
+        if let Some(mac) = self.peer_book()?.mac() {
+            id.mac = mac;
+        }
+        Ok(id)
     }
 
     pub fn peer_book(&self) -> Result<PeerBook, Error> {

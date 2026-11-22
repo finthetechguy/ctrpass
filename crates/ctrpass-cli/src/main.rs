@@ -78,6 +78,9 @@ enum Command {
         force: bool,
         #[arg(long, value_enum, default_value_t = RadioMode::Auto)]
         radio_mode: RadioMode,
+        /// Hours between changing the MAC and clearing the filter of passed consoles; 0 for never.
+        #[arg(long, default_value_t = 8.0)]
+        rotate_every: f64,
     },
     /// Build and read Mii Plaza messages.
     Plaza {
@@ -261,30 +264,42 @@ fn run(cli: Cli) -> Result<(), String> {
             passes,
             force,
             radio_mode,
+            rotate_every,
         } => {
             use ctrpass::radio::linux::Mode;
             let keys = load_keys(&cli.keys)?;
             let path = cli.store.map_or_else(store::default_path, Ok)?;
             let mut store = ctrpass::store::Store::open(&path).map_err(|e| e.to_string())?;
-            let mac = store.identity().map_err(|e| e.to_string())?.mac;
             let mode = match radio_mode {
                 RadioMode::Auto => None,
                 RadioMode::Active => Some(Mode::Active),
                 RadioMode::Mixed => Some(Mode::Mixed),
             };
-            let mut radio = open_radio(&interface, Some(mac), force, mode)?;
-            let mut channels = channels;
-            if let Some(fixed) = radio.fixed_channel() {
-                eprintln!("ctrpass: {interface} is in mixed mode, so only channel {fixed} is used");
-                channels = vec![fixed];
+            let mut counts = (0, 0);
+            loop {
+                let mac = store.identity().map_err(|e| e.to_string())?.mac;
+                let mut radio = open_radio(&interface, Some(mac), force, mode)?;
+                let mut channels = channels.clone();
+                if let Some(fixed) = radio.fixed_channel() {
+                    eprintln!(
+                        "ctrpass: {interface} is in mixed mode, so only channel {fixed} is used"
+                    );
+                    channels = vec![fixed];
+                }
+                let opts = exchange::Options {
+                    role,
+                    channels,
+                    window: Duration::from_secs_f64(window),
+                    passes,
+                    rotate_every: exchange::rotate_interval(rotate_every),
+                };
+                match exchange::run(&mut radio, &mut store, &keys, &opts, &STOP, &mut counts)? {
+                    exchange::Ended::Rotated => continue,
+                    exchange::Ended::Done => break,
+                }
             }
-            let opts = exchange::Options {
-                role,
-                channels,
-                window: Duration::from_secs_f64(window),
-                passes,
-            };
-            exchange::run(&mut radio, &mut store, &keys, &opts, &STOP)
+            eprintln!("{} exchange(s) in {} pass(es)", counts.1, counts.0);
+            Ok(())
         }
         #[cfg(not(target_os = "linux"))]
         Command::Exchange { .. } => Err("exchanging needs Linux".into()),

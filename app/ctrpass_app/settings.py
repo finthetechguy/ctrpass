@@ -7,6 +7,7 @@ from pathlib import Path
 
 MODES = ("alternate", "lead", "wait")
 RADIOS = ("auto", "active", "mixed")
+CLEAR_HOURS_MAX = 168
 
 
 def config_dir():
@@ -37,6 +38,7 @@ class Settings:
     mode: str = "alternate"
     radio: str = "auto"
     background: bool = False
+    clear_hours: int = 8
 
     @classmethod
     def load(cls):
@@ -53,6 +55,8 @@ class Settings:
             s.mode = "alternate"
         if s.radio not in RADIOS:
             s.radio = "auto"
+        if not 1 <= s.clear_hours <= CLEAR_HOURS_MAX:
+            s.clear_hours = 8
         return s
 
     def save(self):

@@ -390,6 +390,21 @@ impl Store {
         )
     }
 
+    /// Changes the MAC and clears the filter of passed consoles, returning the new MAC.
+    fn rotate(&self) -> PyResult<String> {
+        let mac = self.with(|s| ::ctrpass::exchange::rotate_now(s))?;
+        Ok(mac
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(":"))
+    }
+
+    /// When the MAC last changed, in Unix seconds, or None before the first time.
+    fn rotated(&self) -> PyResult<Option<u64>> {
+        self.with(|s| Ok(s.peer_book()?.rotated()))
+    }
+
     /// The whole store as JSON text, for the radio helper's load command.
     fn snapshot(&self) -> PyResult<String> {
         let snap = self.with(|s| s.snapshot())?;

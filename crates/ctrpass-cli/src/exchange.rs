@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clap::ValueEnum;
-use ctrpass::exchange::{PassConfig, Report, run_pass};
+use ctrpass::exchange::{PassConfig, Report, rotate_if_due, run_pass};
 use ctrpass::keys::Keys;
 use ctrpass::link::{Event, Role};
 use ctrpass::radio::Radio;
@@ -76,19 +76,39 @@ pub struct Options {
     pub channels: Vec<u8>,
     pub window: Duration,
     pub passes: Option<u32>,
+    /// How often to change the MAC and clear the filter.
+    pub rotate_every: Option<Duration>,
 }
 
+/// How a run of passes ended.
+pub enum Ended {
+    Done,
+    /// The MAC changed, so the radio must be opened again with the store's new MAC.
+    Rotated,
+}
+
+/// Hours as a rotation interval, with 0 meaning never.
+pub fn rotate_interval(hours: f64) -> Option<Duration> {
+    (hours > 0.0).then(|| Duration::from_secs_f64(hours * 3600.0))
+}
+
+/// Runs passes until done or the MAC is due to change, counting passes and exchanges across calls.
 pub fn run(
     radio: &mut dyn Radio,
     store: &mut Store,
     keys: &Keys,
     opts: &Options,
     stop: &AtomicBool,
-) -> Result<(), String> {
-    let mut exchanged = 0;
-    let mut pass = 0;
-    while opts.passes.is_none_or(|n| pass < n) && !stop.load(Ordering::Relaxed) {
-        let role = opts.role.for_pass(pass);
+    counts: &mut (u32, u32),
+) -> Result<Ended, String> {
+    let (pass, exchanged) = counts;
+    while opts.passes.is_none_or(|n| *pass < n) && !stop.load(Ordering::Relaxed) {
+        if let Some(mac) = rotate_if_due(store, opts.rotate_every).map_err(|e| e.to_string())? {
+            println!("{}", json!({"event": "rotated", "mac": mac_text(&mac)}));
+            return Ok(Ended::Rotated);
+        }
+        let pass_no = *pass;
+        let role = opts.role.for_pass(pass_no);
         let config = PassConfig {
             role,
             channels: opts.channels.clone(),
@@ -101,13 +121,12 @@ pub fn run(
         })
         .map_err(|e| e.to_string())?;
         if report.peer.is_some() {
-            println!("{}", report_json(pass, role, &report));
+            println!("{}", report_json(pass_no, role, &report));
         }
         if !report.sent.is_empty() || !report.received.is_empty() {
-            exchanged += 1;
+            *exchanged += 1;
         }
-        pass += 1;
+        *pass += 1;
     }
-    eprintln!("{exchanged} exchange(s) in {pass} pass(es)");
-    Ok(())
+    Ok(Ended::Done)
 }

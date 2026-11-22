@@ -94,14 +94,20 @@ class Helper:
             command["channels"] = list(channels)
         self._send(**command)
 
-    def exchange(self, role="lead", passes=None, window=60.0, radio="auto", channels=None):
+    def exchange(self, role="lead", passes=None, window=60.0, radio="auto", channels=None, rotate_every=None):
         """Runs passes until `passes` are done or stop is sent; each "pass" event carries what arrived."""
         command = {"cmd": "exchange", "role": role, "window": window, "radio": radio}
+        if rotate_every is not None:
+            command["rotate_every"] = rotate_every
         if passes is not None:
             command["passes"] = passes
         if channels:
             command["channels"] = list(channels)
         self._send(**command)
+
+    def rotate(self):
+        """Changes the MAC and clears the filter of passed consoles, ending with a "rotated" event."""
+        self._send(cmd="rotate")
 
     def stop(self):
         self._send(cmd="stop")

@@ -1,5 +1,6 @@
 //! StreetPass with Nintendo 3DS consoles.
 
+pub mod cec;
 pub mod keys;
 pub mod radio;
 pub mod streetpass;

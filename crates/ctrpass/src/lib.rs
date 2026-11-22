@@ -3,6 +3,7 @@
 pub mod cec;
 pub mod keys;
 pub mod radio;
+pub mod scan;
 pub mod streetpass;
 pub mod wifi;
 pub mod yy;

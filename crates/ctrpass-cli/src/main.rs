@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use ctrpass::keys::Keys;
@@ -27,7 +29,27 @@ enum Command {
     Decode { pcap: PathBuf },
     /// Print a CEC message, envelope or exchange object as JSON, checking signatures when keys are available.
     Info { file: PathBuf },
+    /// List nearby consoles from their StreetPass probes.
+    Scan {
+        /// Wireless interface to take over while scanning.
+        #[arg(short, long)]
+        interface: String,
+        /// Channels to listen on, in order.
+        #[arg(long, value_delimiter = ',', default_values_t = ctrpass::scan::CHANNELS)]
+        channels: Vec<u8>,
+        /// Seconds to listen on each channel.
+        #[arg(long, default_value_t = 2.0)]
+        dwell: f64,
+        /// Passes over all channels.
+        #[arg(long, default_value_t = 3)]
+        rounds: u32,
+        /// Take over the interface even if it is connected to a network.
+        #[arg(long)]
+        force: bool,
+    },
 }
+
+static STOP: AtomicBool = AtomicBool::new(false);
 
 fn key_path(path: &Option<PathBuf>) -> Option<PathBuf> {
     path.clone()
@@ -55,6 +77,35 @@ pub(crate) fn mac_text(m: &[u8]) -> String {
         .join(":")
 }
 
+fn found_json(f: &ctrpass::scan::Found) -> serde_json::Value {
+    serde_json::json!({
+        "mac": mac_text(&f.mac),
+        "token": f.token.map(|t| hex(&t)),
+        "channel": f.channel,
+        "signal": f.signal,
+        "services": f.services.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn open_radio(interface: &str, force: bool) -> Result<ctrpass::radio::linux::LinuxRadio, String> {
+    let radio = ctrpass::radio::linux::LinuxRadio::open(interface, None, force).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied
+            || e.to_string().contains("Operation not permitted")
+        {
+            format!("{e} (needs root or CAP_NET_ADMIN and CAP_NET_RAW)")
+        } else {
+            e.to_string()
+        }
+    })?;
+    if !radio.capabilities.active_monitor {
+        eprintln!(
+            "ctrpass: {interface} cannot acknowledge frames in monitor mode; scanning works, exchanging needs mixed mode"
+        );
+    }
+    Ok(radio)
+}
+
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Decode { pcap } => {
@@ -65,10 +116,34 @@ fn run(cli: Cli) -> Result<(), String> {
             let keys = optional_keys(&cli.keys)?;
             info::run(&file, keys.as_ref())
         }
+        #[cfg(target_os = "linux")]
+        Command::Scan {
+            interface,
+            channels,
+            dwell,
+            rounds,
+            force,
+        } => {
+            let mut radio = open_radio(&interface, force)?;
+            let found = ctrpass::scan::scan(
+                &mut radio,
+                &channels,
+                Duration::from_secs_f64(dwell),
+                rounds,
+                &STOP,
+                |f| println!("{}", found_json(f)),
+            )
+            .map_err(|e| e.to_string())?;
+            eprintln!("{} console(s) heard", found.len());
+            Ok(())
+        }
+        #[cfg(not(target_os = "linux"))]
+        Command::Scan { .. } => Err("scanning needs Linux".into()),
     }
 }
 
 fn main() -> ExitCode {
+    let _ = ctrlc::set_handler(|| STOP.store(true, Ordering::Relaxed));
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

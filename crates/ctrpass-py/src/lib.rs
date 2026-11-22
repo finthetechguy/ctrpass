@@ -103,17 +103,12 @@ impl Container {
         title::message_text(&self.0)
     }
 
-    /// The message's own icon as 40x40 rows of (r, g, b), if it has one.
+    /// The message's own 40x40 icon as RGB bytes, if it has one.
     #[getter]
-    fn icon(&self) -> Option<Vec<Vec<(u8, u8, u8)>>> {
+    fn icon<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyBytes>> {
         let raw = self.0.ext_header(::ctrpass::cec::container::EXT_ICON)?;
         let icon = Icon::decode(40, raw).ok()?;
-        Some(
-            icon.to_rgb()
-                .chunks(40)
-                .map(|row| row.iter().map(|p| (p[0], p[1], p[2])).collect())
-                .collect(),
-        )
+        Some(PyBytes::new(py, &icon.to_rgb().concat()))
     }
 
     #[getter]
@@ -347,6 +342,17 @@ impl Store {
         })
     }
 
+    /// Makes `message` the only outbox message of its title, returning how many it replaced.
+    fn replace_outbox(&self, message: &Container) -> PyResult<usize> {
+        self.with(|s| {
+            s.replace_outbox(
+                &message.0,
+                None,
+                Some(rs_store::Origin::Local("added in the app".into())),
+            )
+        })
+    }
+
     fn remove_message(&self, title: u32, r#box: &str, message_id: u64) -> PyResult<bool> {
         let m = mailbox(r#box)?;
         self.with(|s| s.remove_message(title, m, message_id))
@@ -471,6 +477,41 @@ impl Store {
     }
 }
 
+/// Decodes a square image field of `size` pixels into RGB bytes.
+#[pyfunction]
+fn icon_rgb<'py>(py: Python<'py>, size: usize, data: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
+    let icon = Icon::decode(size, data).map_err(err)?;
+    Ok(PyBytes::new(py, &icon.to_rgb().concat()))
+}
+
+/// Scales RGB pixels of any size into a square image field of `size` pixels.
+#[pyfunction]
+fn icon_from_rgb<'py>(
+    py: Python<'py>,
+    size: usize,
+    width: usize,
+    height: usize,
+    rgb: &[u8],
+) -> PyResult<Bound<'py, PyBytes>> {
+    if width == 0 || height == 0 || rgb.len() != width * height * 3 {
+        return Err(err("the pixels do not match the size"));
+    }
+    let pixels: Vec<[u8; 3]> = rgb.chunks_exact(3).map(|p| [p[0], p[1], p[2]]).collect();
+    let icon = Icon::from_rgb(size, width, height, &pixels);
+    Ok(PyBytes::new(py, &icon.encode()))
+}
+
+/// The signing key the key file's text holds for a title, if any.
+#[pyfunction]
+fn title_key_of<'py>(
+    py: Python<'py>,
+    keys: &str,
+    title_id: u32,
+) -> PyResult<Option<Bound<'py, PyBytes>>> {
+    let k = Keys::parse(keys).map_err(err)?;
+    Ok(k.title(title_id).map(|key| PyBytes::new(py, key)))
+}
+
 /// Wraps containers of one title in an envelope, as a file to share.
 #[pyfunction]
 fn envelope_of<'py>(py: Python<'py>, messages: Vec<Container>) -> PyResult<Bound<'py, PyBytes>> {
@@ -488,6 +529,9 @@ fn ctrpass(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_fields, m)?)?;
     m.add_function(wrap_pyfunction!(build_message, m)?)?;
     m.add_function(wrap_pyfunction!(envelope_of, m)?)?;
+    m.add_function(wrap_pyfunction!(icon_rgb, m)?)?;
+    m.add_function(wrap_pyfunction!(icon_from_rgb, m)?)?;
+    m.add_function(wrap_pyfunction!(title_key_of, m)?)?;
     m.add("version", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

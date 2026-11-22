@@ -14,3 +14,6 @@ ctrpass-app = "ctrpass_app.main:main"
 
 [tool.setuptools]
 packages = ["ctrpass_app"]
+
+[tool.setuptools.package-data]
+ctrpass_app = ["icons/*.svg"]

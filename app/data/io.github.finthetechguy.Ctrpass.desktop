@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ctrpass
+Comment=StreetPass with Nintendo 3DS consoles
+Exec=ctrpass-app
+Icon=network-wireless-symbolic
+Terminal=false
+Categories=Network;GTK;
+StartupNotify=true

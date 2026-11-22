@@ -180,6 +180,7 @@ fn found_json(f: &ctrpass::scan::Found) -> serde_json::Value {
         "channel": f.channel,
         "signal": f.signal,
         "services": f.services.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        "titles": f.services.iter().map(|s| s.title).collect::<Vec<_>>(),
     })
 }
 

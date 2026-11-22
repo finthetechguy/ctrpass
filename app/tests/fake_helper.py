@@ -24,9 +24,13 @@ for line in sys.stdin:
         if store is None:
             emit(event="error", message="no store loaded")
             continue
+        emit(event="state", state="exchanging")
         emit(event="engaged", peer="96:58:cb:00:00:01")
         emit(event="pass", pass_=0, role=cmd["role"], peer="96:58:cb:00:00:01", sent=[],
              refused=[], received=[], not_filed=[], messages=[], peers={"filter": ["96:58:cb:00:00:01"]})
+        if cmd.get("passes") == 1:
+            emit(event="state", state="idle")
+    elif kind == "stop":
         emit(event="state", state="idle")
     elif kind == "quit":
         break

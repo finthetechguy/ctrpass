@@ -1,10 +1,14 @@
 //! StreetPass with Nintendo 3DS consoles.
 
 pub mod cec;
+pub mod exchange;
 pub mod identity;
 pub mod keys;
+pub mod link;
 pub mod radio;
 pub mod scan;
+#[cfg(test)]
+mod sim;
 pub mod store;
 pub mod streetpass;
 pub mod wifi;

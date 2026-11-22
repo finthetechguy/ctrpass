@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use ctrpass::keys::Keys;
 
 mod decode;
+mod exchange;
 mod info;
 mod store;
 
@@ -47,6 +48,26 @@ enum Command {
         /// Passes over all channels.
         #[arg(long, default_value_t = 3)]
         rounds: u32,
+        /// Take over the interface even if it is connected to a network.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Exchange the store's messages with nearby consoles until stopped.
+    Exchange {
+        /// Wireless interface to take over.
+        #[arg(short, long)]
+        interface: String,
+        #[arg(long, value_enum, default_value_t = exchange::RoleArg::Lead)]
+        role: exchange::RoleArg,
+        /// Channels to look for consoles on, in order.
+        #[arg(long, value_delimiter = ',', default_values_t = ctrpass::scan::CHANNELS)]
+        channels: Vec<u8>,
+        /// Seconds each pass waits for a console.
+        #[arg(long, default_value_t = 60.0)]
+        window: f64,
+        /// Stop after this many passes instead of running until interrupted.
+        #[arg(long)]
+        passes: Option<u32>,
         /// Take over the interface even if it is connected to a network.
         #[arg(long)]
         force: bool,
@@ -97,8 +118,12 @@ fn found_json(f: &ctrpass::scan::Found) -> serde_json::Value {
 }
 
 #[cfg(target_os = "linux")]
-fn open_radio(interface: &str, force: bool) -> Result<ctrpass::radio::linux::LinuxRadio, String> {
-    let radio = ctrpass::radio::linux::LinuxRadio::open(interface, None, force).map_err(|e| {
+fn open_radio(
+    interface: &str,
+    mac: Option<ctrpass::wifi::frame::Mac>,
+    force: bool,
+) -> Result<ctrpass::radio::linux::LinuxRadio, String> {
+    let radio = ctrpass::radio::linux::LinuxRadio::open(interface, mac, force).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied
             || e.to_string().contains("Operation not permitted")
         {
@@ -133,7 +158,7 @@ fn run(cli: Cli) -> Result<(), String> {
             rounds,
             force,
         } => {
-            let mut radio = open_radio(&interface, force)?;
+            let mut radio = open_radio(&interface, None, force)?;
             let found = ctrpass::scan::scan(
                 &mut radio,
                 &channels,
@@ -148,6 +173,30 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         #[cfg(not(target_os = "linux"))]
         Command::Scan { .. } => Err("scanning needs Linux".into()),
+        #[cfg(target_os = "linux")]
+        Command::Exchange {
+            interface,
+            role,
+            channels,
+            window,
+            passes,
+            force,
+        } => {
+            let keys = load_keys(&cli.keys)?;
+            let path = cli.store.map_or_else(store::default_path, Ok)?;
+            let mut store = ctrpass::store::Store::open(&path).map_err(|e| e.to_string())?;
+            let mac = store.identity().map_err(|e| e.to_string())?.mac;
+            let mut radio = open_radio(&interface, Some(mac), force)?;
+            let opts = exchange::Options {
+                role,
+                channels,
+                window: Duration::from_secs_f64(window),
+                passes,
+            };
+            exchange::run(&mut radio, &mut store, &keys, &opts, &STOP)
+        }
+        #[cfg(not(target_os = "linux"))]
+        Command::Exchange { .. } => Err("exchanging needs Linux".into()),
         Command::Store { action } => {
             let keys = optional_keys(&cli.keys)?;
             let path = cli.store.map_or_else(store::default_path, Ok)?;

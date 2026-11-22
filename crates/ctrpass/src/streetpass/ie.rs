@@ -74,21 +74,33 @@ fn tlv_header(out: &mut Vec<u8>, (a, b): (u8, u8), len: usize) {
     out.extend_from_slice(&h.to_le_bytes());
 }
 
-fn vendor_element(token: &Token, services: &[Service]) -> Vec<u8> {
-    let mut body = NINTENDO_OUI.to_vec();
-    body.push(VENDOR_SUBTYPE);
+/// Service records and the token as TLVs, never splitting a record across two TLVs.
+fn push_records(body: &mut Vec<u8>, token: &Token, services: &[Service]) {
     let mut chunk = Vec::new();
-    for s in service::fit(services, DISCOVERY_BUDGET) {
+    for s in services {
         if !chunk.is_empty() && chunk.len() + s.size() > TLV_MAX {
-            tlv_header(&mut body, TLV_SERVICES, chunk.len());
+            tlv_header(body, TLV_SERVICES, chunk.len());
             body.append(&mut chunk);
         }
         s.write(&mut chunk);
     }
-    tlv_header(&mut body, TLV_SERVICES, chunk.len());
+    tlv_header(body, TLV_SERVICES, chunk.len());
     body.append(&mut chunk);
-    tlv_header(&mut body, TLV_TOKEN, token.len());
+    tlv_header(body, TLV_TOKEN, token.len());
     body.extend_from_slice(token);
+}
+
+fn vendor_element(token: &Token, services: &[Service]) -> Vec<u8> {
+    let mut body = NINTENDO_OUI.to_vec();
+    body.push(VENDOR_SUBTYPE);
+    push_records(&mut body, token, &service::fit(services, DISCOVERY_BUDGET));
+    body
+}
+
+/// The payload of the services object sent inside a link, which carries every record.
+pub fn link_records(token: &Token, services: &[Service]) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_records(&mut body, token, services);
     body
 }
 

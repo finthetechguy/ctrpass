@@ -4,6 +4,8 @@ Library, Linux command-line tool and desktop app for StreetPass-ing nearby Ninte
 
 [Get Started](https://github.com/finthetechguy/ctrpass/wiki)
 
+[Protocol](https://github.com/finthetechguy/ctrpass/wiki/Protocol-Overview)
+
 <!-- TODO screenshot: StreetPass page with a nearby console -->
 <!-- TODO screenshot: Messages page and a Mii Plaza message -->
 

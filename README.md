@@ -2,6 +2,8 @@
 
 Library, Linux command-line tool and desktop app for StreetPass-ing nearby Nintendo 3DS consoles over local wireless.
 
+[Get Started](https://github.com/finthetechguy/ctrpass/wiki)
+
 <!-- TODO screenshot: StreetPass page with a nearby console -->
 <!-- TODO screenshot: Messages page and a Mii Plaza message -->
 
@@ -80,6 +82,15 @@ sudo ctrpass --store /var/lib/ctrpass export --dry-run /path/to/emulator/data
 ```
 
 `ctrpass --help` lists the commands. Run `ctrpass <command> --help` for its options.
+
+## Notes
+
+ctrpass contains no Nintendo code, it was built through extensive reverse engineering and testing on my own hardware.
+
+Nintendo, Nintendo 3DS and StreetPass are trademarks of Nintendo. This project is not affiliated with or endorsed by Nintendo.
+
+> [!NOTE]  
+> [Tuxchange](https://github.com/finthetechguy/Tuxchange) is my older Python PoC for StreetPass on Linux, ctrpass is designed to be more stable, user-friendly, and not tightly integrated with Linux + `systemd`. It is still available for those who must use an always running systemd service daemon, or referencing the Python code, etc.
 
 ## License
 

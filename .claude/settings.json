@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "mcp__kanzo__list_projects",
-      "mcp__kanzo__list_tasks",
-      "mcp__kanzo__get_task"
-    ]
-  }
-}

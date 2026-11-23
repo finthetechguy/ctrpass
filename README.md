@@ -15,7 +15,7 @@ Library, Linux command-line tool and desktop app for StreetPass-ing nearby Ninte
 - Keep an inbox and outbox, and choose which games to receive messages for.
 - Create and inspect StreetPass Mii Plaza messages.
 - Import messages from a CEC save image, folder or message file.
-- Copy inbox messages to an existing StreetPass folder in Azahar, AzaharPlus, Citra or Lime3DS.
+- Copy inbox messages to an existing StreetPass folder in emulators.
 - Decode StreetPass packet captures and inspect message files as JSON.
 
 ## Requirements

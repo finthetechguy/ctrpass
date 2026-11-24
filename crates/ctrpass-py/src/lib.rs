@@ -148,7 +148,9 @@ fn check_keys(py: Python<'_>, text: &str) -> PyResult<PyObject> {
     to_py(py, &json!({"titles": titles, "record": k.record.is_some()}))
 }
 
-/// The titles messages can be built for, with their fields.
+/// The titles messages can be built for, with their fields and the plugin that gives them.
+///
+/// `plugin` is the plugin file's path, or None for a built-in plugin.
 #[pyfunction]
 fn titles(py: Python<'_>) -> PyResult<PyObject> {
     let all: Vec<Value> = title::all()
@@ -157,12 +159,34 @@ fn titles(py: Python<'_>) -> PyResult<PyObject> {
             json!({
                 "title": t.id(),
                 "name": t.name(),
+                "version": t.version(),
+                "author": t.author(),
+                "plugin": t.source().path(),
                 "send_mode": t.send_mode(),
                 "fields": t.fields(),
             })
         })
         .collect();
     to_py(py, &Value::from(all))
+}
+
+/// The plugin folder, the plugins that failed to load, and warnings from loading.
+#[pyfunction]
+fn plugin_issues(py: Python<'_>) -> PyResult<PyObject> {
+    let r = ::ctrpass::plugin::registry();
+    let errors: Vec<Value> = r
+        .errors()
+        .iter()
+        .map(|e| json!({"file": e.file, "error": e.error}))
+        .collect();
+    to_py(
+        py,
+        &json!({
+            "folder": ::ctrpass::plugin::default_dir(),
+            "errors": errors,
+            "warnings": r.warnings(),
+        }),
+    )
 }
 
 /// Names of games known to use StreetPass, by title ID.
@@ -175,7 +199,7 @@ fn game_names(py: Python<'_>) -> PyResult<PyObject> {
     to_py(py, &Value::from(names))
 }
 
-fn find_title(id: u32) -> PyResult<&'static dyn title::Title> {
+fn find_title(id: u32) -> PyResult<&'static title::Title> {
     title::by_id(id).ok_or_else(|| PyKeyError::new_err(format!("no fields are known for {id:08X}")))
 }
 
@@ -551,6 +575,7 @@ fn ctrpass(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_messages, m)?)?;
     m.add_function(wrap_pyfunction!(check_keys, m)?)?;
     m.add_function(wrap_pyfunction!(titles, m)?)?;
+    m.add_function(wrap_pyfunction!(plugin_issues, m)?)?;
     m.add_function(wrap_pyfunction!(read_fields, m)?)?;
     m.add_function(wrap_pyfunction!(build_message, m)?)?;
     m.add_function(wrap_pyfunction!(envelope_of, m)?)?;

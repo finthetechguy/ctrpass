@@ -5,7 +5,7 @@ use ctrpass::cec::Container;
 use ctrpass::cec::icon::Icon;
 use ctrpass::identity::Identity;
 use ctrpass::keys::Keys;
-use ctrpass::title::{self, Context, Kind, Title, Values};
+use ctrpass::title::{self, Context, Kind, Source, Title, Values};
 use serde_json::{Value, json};
 
 #[derive(Subcommand)]
@@ -42,9 +42,10 @@ pub struct Common {
     /// Set a field, as key=value; repeatable.
     #[arg(long = "set", value_name = "KEY=VALUE")]
     pub sets: Vec<String>,
-    /// Set an image field from a PNG, as key=file; repeatable.
-    #[arg(long = "image", value_name = "KEY=PNG")]
-    pub images: Vec<String>,
+    /// Set a field from a file, as key=file: a PNG for images, a record or message for Miis,
+    /// raw bytes otherwise; repeatable.
+    #[arg(long = "file", alias = "image", value_name = "KEY=FILE")]
+    pub files: Vec<String>,
     /// A JSON object of field values, like the "values" that show prints.
     #[arg(long)]
     pub values: Option<PathBuf>,
@@ -98,10 +99,7 @@ pub fn write_png(path: &Path, icon: &Icon) -> Result<(), String> {
 }
 
 /// The body and message, if any, a file holds, for `title` when given.
-pub fn load(
-    path: &Path,
-    title: Option<&dyn Title>,
-) -> Result<(Vec<u8>, Option<Container>), String> {
+pub fn load(path: &Path, title: Option<&Title>) -> Result<(Vec<u8>, Option<Container>), String> {
     let bytes = read(path)?;
     match Container::parse(&bytes) {
         Ok(c) => {
@@ -131,12 +129,40 @@ fn split(arg: &str) -> Result<(&str, &str), String> {
         .ok_or_else(|| format!("{arg:?} is not key=value"))
 }
 
-pub fn build(
-    t: &dyn Title,
-    args: &Common,
-    keys: &Keys,
-    store: Option<&Path>,
-) -> Result<(), String> {
+/// A field's value from a file, as `--file` takes it.
+fn file_value(t: &Title, key: &str, path: &Path, keys: &Keys) -> Result<Value, String> {
+    let e = |e: ctrpass::Error| format!("{}: {e}", path.display());
+    let f = title::field(t, key).map_err(|e| e.to_string())?;
+    if let Kind::Image { size } = f.kind {
+        return Ok(Value::from(title::hex(
+            &icon_from_png(path, size)?.encode(),
+        )));
+    }
+    let bytes = read(path)?;
+    let record_key = keys.record.as_ref();
+    if let (Kind::Mii { .. }, Ok(c)) = (&f.kind, Container::parse(&bytes)) {
+        // Take the first Mii from a message of any title that holds one.
+        let from = title::by_id(c.title()).ok_or_else(|| {
+            format!(
+                "{}: no fields are known for {:08X}",
+                path.display(),
+                c.title()
+            )
+        })?;
+        let ctx = context(Some(keys), None);
+        let values = from.read(c.body(), &ctx).map_err(e)?;
+        let mii = from
+            .fields()
+            .iter()
+            .find(|g| matches!(g.kind, Kind::Mii { .. }))
+            .and_then(|g| values.get(&g.key))
+            .ok_or_else(|| format!("{} holds no Mii", path.display()))?;
+        return title::check(f, mii).map_err(e);
+    }
+    title::from_file(f, &bytes, record_key).map_err(e)
+}
+
+pub fn build(t: &Title, args: &Common, keys: &Keys, store: Option<&Path>) -> Result<(), String> {
     let e = |e: ctrpass::Error| e.to_string();
     let title_key = keys
         .title(t.id())
@@ -167,11 +193,11 @@ pub fn build(
         for (k, v) in given {
             let f = title::field(t, &k).map_err(e)?;
             // Images print as a PNG path or a size note; load the first and skip the second.
-            if let (Kind::Image { size }, Some(s)) = (f.kind, v.as_str()) {
+            if let (Kind::Image { size }, Some(s)) = (&f.kind, v.as_str()) {
                 if title::unhex(s).is_none() {
                     if s.ends_with(".png") {
                         let icon =
-                            icon_from_png(&path.parent().unwrap_or(Path::new(".")).join(s), size)?;
+                            icon_from_png(&path.parent().unwrap_or(Path::new(".")).join(s), *size)?;
                         values.insert(k, Value::from(title::hex(&icon.encode())));
                     }
                     continue;
@@ -187,13 +213,9 @@ pub fn build(
             title::from_text(title::field(t, k).map_err(e)?, v).map_err(e)?,
         );
     }
-    for arg in &args.images {
+    for arg in &args.files {
         let (k, path) = split(arg)?;
-        let Kind::Image { size } = title::field(t, k).map_err(e)?.kind else {
-            return Err(format!("{k} is not an image field"));
-        };
-        let icon = icon_from_png(Path::new(path), size)?;
-        values.insert(k.into(), Value::from(title::hex(&icon.encode())));
+        values.insert(k.into(), file_value(t, k, Path::new(path), keys)?);
     }
     let body = t.write(&body, &values, &ctx).map_err(e)?;
     let problems = t.problems(&body);
@@ -232,16 +254,28 @@ pub fn build(
     Ok(())
 }
 
+/// A title's plugin details, as the list commands print them.
+pub fn about(t: &Title) -> Value {
+    json!({
+        "title": format!("{:08X}", t.id()),
+        "name": t.name(),
+        "version": t.version(),
+        "author": t.author(),
+        "plugin": match t.source() {
+            Source::BuiltIn => Value::from("built-in"),
+            Source::File(p) => Value::from(p.display().to_string()),
+        },
+    })
+}
+
 pub fn list() {
     let titles: Vec<_> = title::all()
         .iter()
         .map(|t| {
-            json!({
-                "title": format!("{:08X}", t.id()),
-                "name": t.name(),
-                "send_mode": t.send_mode(),
-                "fields": t.fields(),
-            })
+            let mut v = about(t);
+            v["send_mode"] = t.send_mode().into();
+            v["fields"] = json!(t.fields());
+            v
         })
         .collect();
     println!("{}", serde_json::to_string_pretty(&titles).unwrap());
@@ -261,7 +295,7 @@ pub fn show(file: &Path, keys: Option<&Keys>, images: Option<&Path>) -> Result<(
         let Kind::Image { size } = f.kind else {
             continue;
         };
-        let Some(icon) = title::Get(&values).image(f.key, size) else {
+        let Some(icon) = title::Get(&values).image(&f.key, size) else {
             continue;
         };
         let shown = match images {
@@ -272,7 +306,7 @@ pub fn show(file: &Path, keys: Option<&Keys>, images: Option<&Path>) -> Result<(
             }
             None => Value::from(format!("{size}x{size} image")),
         };
-        values.insert(f.key.into(), shown);
+        values.insert(f.key.clone(), shown);
     }
     let c = msg.as_ref().unwrap();
     let out = json!({

@@ -1,0 +1,243 @@
+api = 1
+title = "00020800"
+name = "Mii Plaza"
+version = "1.0.0"
+author = "ctrpass"
+# The Plaza sends and receives in the same exchange.
+send_mode = 0
+message_text = "A visitor arrived"
+# The current Plaza body; the original release used a shorter one, which is not supported.
+size = 0x7280
+
+# Header of the Mii box.
+[[fill]]
+at = 0x36bc
+hex = "43465042 01000000 00000000 00000000 00000000 0100"
+
+[create]
+values = { featured = "0x0004000000000000", region_lockout = 0x7fffffff, presence = 0x100, icon = "standard", small_icon = "standard", short = "ctrpass", long = "ctrpass", publisher = "ctrpass" }
+identity = { hat = "hat", dream = "dream", hobby = "hobby" }
+
+[[check]]
+at = 0x36bc
+one_of = ["43465042", "4346504e"]
+problem = "the body holds no Mii"
+
+[[field]]
+key = "name"
+label = "Mii name"
+type = "mii_name"
+
+[[field]]
+key = "creator"
+label = "Creator"
+help = "Shown as who made the Mii"
+type = "mii_creator"
+
+[[field]]
+key = "greeting"
+label = "Greeting"
+help = "Shown on the Mii's card"
+type = "text"
+at = 0x3f70
+bytes = 0x22
+
+[[field]]
+key = "hits"
+label = "StreetPass hits"
+type = "number"
+at = 0x3f60
+width = 4
+max = 999999
+
+[[field]]
+key = "population"
+label = "Plaza population"
+type = "number"
+at = 0x3f64
+width = 2
+max = 3000
+
+[[field]]
+key = "hat"
+label = "Hat"
+type = "number"
+at = 0x3f66
+width = 1
+max = 203
+# The Plaza resets these to no hat.
+exclude = [69, 75, 168, 169]
+
+[[field]]
+key = "pet"
+label = "Pet"
+type = "number"
+at = 0x3f67
+width = 1
+max = 2
+
+[[field]]
+key = "dream"
+label = "Dream"
+type = "number"
+at = 0x3f68
+width = 1
+max = 19
+
+[[field]]
+key = "hobby"
+label = "Hobby"
+type = "number"
+at = 0x3f69
+width = 1
+max = 27
+
+[[field]]
+key = "bubble"
+label = "Speech bubble"
+type = "number"
+at = 0x614c
+width = 1
+max = 5
+
+[[field]]
+key = "country"
+label = "Country"
+help = "Used for every language"
+type = "text"
+at = 0x3760
+bytes = 0x40
+copies = 16
+read_copy = 1
+
+[[field]]
+key = "region"
+label = "Region"
+help = "Used for every language"
+type = "text"
+at = 0x3b60
+bytes = 0x40
+copies = 16
+read_copy = 1
+
+[[field]]
+key = "featured"
+label = "Featured title ID"
+help = "The game shown on the card"
+type = "number"
+at = 0x0
+width = 8
+min = 1
+max = "0xfffffffffffffffe"
+hex = true
+
+[[field]]
+key = "short"
+label = "Featured short name"
+help = "Used for every language"
+type = "text"
+at = 0x30
+bytes = 0x80
+copies = 16
+stride = 0x200
+read_copy = 1
+
+[[field]]
+key = "long"
+label = "Featured long name"
+help = "Used for every language"
+type = "text"
+at = 0xb0
+bytes = 0x100
+copies = 16
+stride = 0x200
+read_copy = 1
+
+[[field]]
+key = "publisher"
+label = "Featured publisher"
+help = "Used for every language"
+type = "text"
+at = 0x1b0
+bytes = 0x80
+copies = 16
+stride = 0x200
+read_copy = 1
+
+# The receiver fills in its own pointer to the icons, so it is cleared on every change.
+[[field]]
+key = "icon"
+label = "Featured icon"
+help = "Also used for the small icon"
+type = "image"
+at = 0x24b8
+size = 48
+clear = [[0x2034, 4]]
+
+[[field]]
+key = "small_icon"
+label = "Featured small icon"
+type = "image"
+at = 0x2038
+size = 24
+scale_from = "icon"
+clear = [[0x2034, 4]]
+advanced = true
+
+[[field]]
+key = "mii"
+label = "Mii record"
+help = "A Mii to start from"
+type = "mii"
+at = 0x36d4
+advanced = true
+
+[[field]]
+key = "mii_id"
+label = "Mii ID"
+type = "mii_id"
+advanced = true
+
+[[field]]
+key = "creator_mac"
+label = "Creator MAC"
+help = "The console the Mii was made on"
+type = "mii_mac"
+advanced = true
+
+[[field]]
+key = "address"
+label = "Address code"
+help = "Country and region code"
+type = "number"
+at = 0x375c
+width = 4
+hex = true
+advanced = true
+
+[[field]]
+key = "region_lockout"
+label = "Region lockout"
+type = "number"
+at = 0x10
+width = 4
+hex = true
+advanced = true
+
+[[field]]
+key = "presence"
+label = "Presence word"
+type = "number"
+at = 0x36b8
+width = 4
+hex = true
+advanced = true
+
+[[field]]
+key = "icon_kind"
+label = "Icon kind"
+type = "number"
+at = 0x2030
+width = 4
+max = 2
+advanced = true

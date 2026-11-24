@@ -9,7 +9,7 @@ use ctrpass::keys::Keys;
 mod decode;
 mod exchange;
 mod info;
-mod plaza;
+mod plugins;
 #[cfg(target_os = "linux")]
 mod serve;
 mod store;
@@ -82,15 +82,15 @@ enum Command {
         #[arg(long, default_value_t = 8.0)]
         rotate_every: f64,
     },
-    /// Build and read Mii Plaza messages.
-    Plaza {
-        #[command(subcommand)]
-        action: plaza::Action,
-    },
     /// Build and read messages for any title ctrpass knows the fields of.
     Title {
         #[command(subcommand)]
         action: title::Action,
+    },
+    /// List and check the plugins that describe titles' fields.
+    Plugins {
+        #[command(subcommand)]
+        action: plugins::Action,
     },
     /// Manage the messages, titles and identity in the store.
     Store {
@@ -303,29 +303,6 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         #[cfg(not(target_os = "linux"))]
         Command::Exchange { .. } => Err("exchanging needs Linux".into()),
-        Command::Plaza { action } => match action {
-            plaza::Action::Build(args) => {
-                let keys = load_keys(&cli.keys)?;
-                let store = match &args.from {
-                    Some(_) => None,
-                    None => Some(cli.store.map_or_else(store::default_path, Ok)?),
-                };
-                plaza::build(&args, &keys, store.as_deref())
-            }
-            plaza::Action::Show {
-                file,
-                icon_out,
-                mii_out,
-            } => {
-                let keys = optional_keys(&cli.keys)?;
-                plaza::show(
-                    &file,
-                    keys.as_ref(),
-                    icon_out.as_deref(),
-                    mii_out.as_deref(),
-                )
-            }
-        },
         Command::Title { action } => match action {
             title::Action::List => {
                 title::list();
@@ -345,6 +322,13 @@ fn run(cli: Cli) -> Result<(), String> {
                 };
                 title::build(t, &args.common, &keys, store.as_deref())
             }
+        },
+        Command::Plugins { action } => match action {
+            plugins::Action::List => {
+                plugins::list();
+                Ok(())
+            }
+            plugins::Action::Check { file } => plugins::check(&file),
         },
         Command::Store { action } => {
             let keys = optional_keys(&cli.keys)?;

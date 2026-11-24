@@ -1,67 +1,162 @@
-//! Titles whose message bodies ctrpass can create and edit, described by their fields.
-//!
-//! Each title states its fields once, which gives it validation, text and JSON input, and a
-//! form in any front end without code of its own.
+//! Titles whose message bodies ctrpass can create and edit, each described by a plugin.
+
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::Error;
 use crate::cec::Container;
-use crate::cec::container::{EXT_ICON, EXT_INFO_TEXT, ICON_LEN, Timestamp};
+use crate::cec::container::{EXT_ICON, EXT_INFO_TEXT, ICON_LEN, MAX_BODY, Timestamp};
 use crate::cec::icon::Icon;
 use crate::identity::Identity;
 use crate::keys::{Key, TitleKey};
+use crate::mii::{self, NAME_LEN, Record, STORED_SIZE, WRAPPED_SIZE};
+use crate::plugin::Engine;
 
-/// Field values by key. Images are hex of their tiled bytes, byte strings are hex.
+/// Field values by key. Images are hex of their tiled bytes, byte strings and Miis are hex.
 pub type Values = Map<String, Value>;
 
-/// Names of the 16 language slots, in order.
-pub const LANGUAGES: [&str; 16] = [
-    "Japanese",
-    "English",
-    "French",
-    "German",
-    "Italian",
-    "Spanish",
-    "Chinese (simplified)",
-    "Korean",
-    "Dutch",
-    "Portuguese",
-    "Russian",
-    "Chinese (traditional)",
-    "unused 12",
-    "unused 13",
-    "unused 14",
-    "unused 15",
-];
+/// Mii names may not hold these characters.
+const MII_NAME_FORBID: &str = "%\\";
+/// Name a new Mii is given before any values are applied.
+const NEW_MII_NAME: &str = "ctrpass";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Kind {
     /// Text of at most `max` UTF-16 units, without the characters in `forbid`.
-    Text { max: usize, forbid: &'static str },
+    Text { max: usize, forbid: String },
     /// A whole number shown in decimal, or hex when `hex` is set.
     Number {
         min: u64,
         max: u64,
-        exclude: &'static [u64],
+        exclude: Vec<u64>,
         hex: bool,
     },
     /// A square image of `size` pixels.
     Image { size: usize },
     /// Exactly `len` bytes.
     Bytes { len: usize },
+    /// A Mii record of `len` bytes, kept protected in the body by ctrpass.
+    Mii { len: usize },
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Field {
-    pub key: &'static str,
-    pub label: &'static str,
+    pub key: String,
+    pub label: String,
     pub kind: Kind,
-    pub help: &'static str,
+    pub help: String,
     /// Rarely changed, so front ends may tuck it away.
     pub advanced: bool,
+}
+
+/// A value ctrpass reads from or writes into a Mii record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MiiPart {
+    Name,
+    Creator,
+    Id,
+    Mac,
+}
+
+impl MiiPart {
+    pub fn named(name: &str) -> Option<Self> {
+        Some(match name {
+            "mii_name" => MiiPart::Name,
+            "mii_creator" => MiiPart::Creator,
+            "mii_id" => MiiPart::Id,
+            "mii_mac" => MiiPart::Mac,
+            _ => return None,
+        })
+    }
+
+    pub fn kind(self) -> Kind {
+        match self {
+            MiiPart::Name | MiiPart::Creator => Kind::Text {
+                max: NAME_LEN,
+                forbid: MII_NAME_FORBID.into(),
+            },
+            MiiPart::Id => Kind::Number {
+                min: 0,
+                max: u32::MAX.into(),
+                exclude: Vec::new(),
+                hex: true,
+            },
+            MiiPart::Mac => Kind::Bytes { len: 6 },
+        }
+    }
+}
+
+/// A protected Mii record at `at` in the body, and the fields that read parts of it.
+#[derive(Clone, Debug)]
+pub struct MiiSlot {
+    pub key: String,
+    pub at: usize,
+    pub parts: Vec<(String, MiiPart)>,
+}
+
+impl MiiSlot {
+    fn holds(&self, key: &str) -> bool {
+        self.key == key || self.parts.iter().any(|(k, _)| k == key)
+    }
+
+    fn range(&self, body: &[u8]) -> Result<std::ops::Range<usize>, Error> {
+        let r = self.at..self.at + WRAPPED_SIZE;
+        if r.end > body.len() {
+            return Err(Error::Format(format!(
+                "{} lies past the end of the body",
+                self.key
+            )));
+        }
+        Ok(r)
+    }
+
+    fn read(&self, body: &[u8], key: &Key, out: &mut Values) -> Result<(), Error> {
+        let mii = mii::unwrap(key, &body[self.range(body)?])?;
+        out.insert(self.key.clone(), hex(mii.as_bytes()).into());
+        for (k, part) in &self.parts {
+            let v = match part {
+                MiiPart::Name => mii.name().into(),
+                MiiPart::Creator => mii.creator_name().into(),
+                MiiPart::Id => mii.mii_id().into(),
+                MiiPart::Mac => hex(&mii.creator_mac()).into(),
+            };
+            out.insert(k.clone(), v);
+        }
+        Ok(())
+    }
+
+    /// Puts `mii` into the body, refusing one a receiver would drop.
+    fn place(&self, body: &mut [u8], key: &Key, mii: &Record) -> Result<(), Error> {
+        let range = self.range(body)?;
+        let mii = mii.for_sending();
+        if let Some(issue) = mii.validate().first() {
+            return Err(Error::Format(format!("{}: {issue}", self.key)));
+        }
+        body[range].copy_from_slice(&mii::wrap(key, &mii));
+        Ok(())
+    }
+
+    fn write(&self, body: &mut [u8], key: &Key, values: &Values) -> Result<(), Error> {
+        let g = Get(values);
+        let mut mii = match g.bytes(&self.key) {
+            Some(b) => Record::from_bytes(&b)?,
+            None => mii::unwrap(key, &body[self.range(body)?])?,
+        };
+        let (mut id, mut mac) = (mii.mii_id(), mii.creator_mac());
+        for (k, part) in &self.parts {
+            match part {
+                MiiPart::Name => g.text(k).map(|n| mii.set_name(n)).transpose()?,
+                MiiPart::Creator => g.text(k).map(|n| mii.set_creator_name(n)).transpose()?,
+                MiiPart::Id => g.number(k).map(|n| id = n as u32),
+                MiiPart::Mac => g.bytes(k).map(|b| mac = b.try_into().unwrap()),
+            };
+        }
+        mii.set_identity(id, mac);
+        self.place(body, key, &mii)
+    }
 }
 
 /// What a title may need besides the body: the Mii key and, for new bodies, an identity.
@@ -76,48 +171,225 @@ impl Context<'_> {
         self.record_key
             .ok_or_else(|| Error::Keys("Miis need the slot0x31 key".into()))
     }
+
+    fn identity(&self) -> Result<&Identity, Error> {
+        self.identity
+            .ok_or_else(|| Error::Format("a new message needs an identity".into()))
+    }
 }
 
-pub trait Title: Sync {
-    fn id(&self) -> u32;
-    fn name(&self) -> &'static str;
-    fn send_mode(&self) -> u8;
-    fn fields(&self) -> &'static [Field];
-    /// A new body, made from the context's identity.
-    fn create(&self, ctx: &Context) -> Result<Vec<u8>, Error>;
-    /// Every field's value in `body`.
-    fn read(&self, body: &[u8], ctx: &Context) -> Result<Values, Error>;
-    /// `body` with the given values applied; fields not in `values` keep their bytes.
-    fn write(&self, body: &[u8], values: &Values, ctx: &Context) -> Result<Vec<u8>, Error>;
-    /// Values in `body` the game would refuse or reset.
-    fn problems(&self, _body: &[u8]) -> Vec<String> {
-        Vec::new()
+/// The identity as plain values, the only part of it a plugin sees.
+pub fn identity_values(id: &Identity) -> Values {
+    let mut v = Values::new();
+    v.insert("mii_id".into(), id.mii_id.into());
+    v.insert("creator_mac".into(), hex(&id.creator_mac).into());
+    v.insert("face_shape".into(), id.face_shape.into());
+    v.insert("gender".into(), id.gender.into());
+    v.insert("hat".into(), id.hat.into());
+    v.insert("dream".into(), id.dream.into());
+    v.insert("hobby".into(), id.hobby.into());
+    v
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    BuiltIn,
+    File(PathBuf),
+}
+
+impl Source {
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Source::BuiltIn => None,
+            Source::File(p) => Some(p),
+        }
     }
+}
+
+/// A plugin's description of itself.
+#[derive(Clone, Debug)]
+pub struct Manifest {
+    pub id: u32,
+    pub name: String,
+    pub version: String,
+    pub author: String,
+    pub send_mode: u8,
+    pub message_text: String,
+    pub message_flags: u8,
+}
+
+pub struct Title {
+    pub(crate) manifest: Manifest,
+    pub(crate) source: Source,
+    pub(crate) fields: Vec<Field>,
+    pub(crate) miis: Vec<MiiSlot>,
+    pub(crate) engine: Engine,
+}
+
+impl std::fmt::Debug for Title {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Title({:08X} {})", self.id(), self.name())
+    }
+}
+
+impl Title {
+    pub fn id(&self) -> u32 {
+        self.manifest.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.manifest.name
+    }
+
+    pub fn version(&self) -> &str {
+        &self.manifest.version
+    }
+
+    pub fn author(&self) -> &str {
+        &self.manifest.author
+    }
+
+    pub fn source(&self) -> &Source {
+        &self.source
+    }
+
+    pub fn send_mode(&self) -> u8 {
+        self.manifest.send_mode
+    }
+
     /// Text shown with a new message.
-    fn message_text(&self) -> &'static str;
+    pub fn message_text(&self) -> &str {
+        &self.manifest.message_text
+    }
+
     /// Flags a new message carries.
-    fn message_flags(&self) -> u8 {
-        3
+    pub fn message_flags(&self) -> u8 {
+        self.manifest.message_flags
+    }
+
+    pub fn fields(&self) -> &[Field] {
+        &self.fields
+    }
+
+    fn is_mii(&self, key: &str) -> bool {
+        self.miis.iter().any(|m| m.holds(key))
+    }
+
+    fn check_body(&self, body: &[u8]) -> Result<(), Error> {
+        if body.is_empty() || body.len() > MAX_BODY {
+            return Err(Error::Format(format!(
+                "{} made a body of {:#x} bytes, outside 1..={MAX_BODY:#x}",
+                self.name(),
+                body.len()
+            )));
+        }
+        Ok(())
+    }
+
+    /// A new body, made from the context's identity.
+    pub fn create(&self, ctx: &Context) -> Result<Vec<u8>, Error> {
+        let id = ctx.identity()?;
+        let (mut body, values) = self.engine.create(&identity_values(id))?;
+        self.check_body(&body)?;
+        if !self.miis.is_empty() {
+            let key = ctx.record_key()?;
+            let mii = Record::new(
+                NEW_MII_NAME,
+                id.mii_id,
+                id.creator_mac,
+                id.face_shape,
+                id.gender,
+            )?;
+            for slot in &self.miis {
+                slot.place(&mut body, key, &mii)?;
+            }
+        }
+        if values.is_empty() {
+            return Ok(body);
+        }
+        self.write(&body, &values, ctx)
+    }
+
+    /// Every field's value in `body`.
+    pub fn read(&self, body: &[u8], ctx: &Context) -> Result<Values, Error> {
+        let mut values = self.read_plain(body)?;
+        if !self.miis.is_empty() {
+            let key = ctx.record_key()?;
+            for slot in &self.miis {
+                slot.read(body, key, &mut values)?;
+            }
+        }
+        Ok(values)
+    }
+
+    /// The values the plugin reads, after checking each is a known field of the right type.
+    fn read_plain(&self, body: &[u8]) -> Result<Values, Error> {
+        let values = self.engine.read(body)?;
+        for (k, v) in &values {
+            let f = field(self, k)?;
+            if self.is_mii(k) || !same_type(&f.kind, v) {
+                return Err(Error::Format(format!(
+                    "{} gave {k} the value {v}, which does not fit the field",
+                    self.name()
+                )));
+            }
+        }
+        Ok(values)
+    }
+
+    /// `body` with the given values applied; fields not in `values` keep their bytes.
+    pub fn write(&self, body: &[u8], values: &Values, ctx: &Context) -> Result<Vec<u8>, Error> {
+        let values = check_all(self, values)?;
+        let (miis, plain): (Values, Values) = values.into_iter().partition(|(k, _)| self.is_mii(k));
+        let mut body = if plain.is_empty() {
+            body.to_vec()
+        } else {
+            self.engine.write(body, &plain)?
+        };
+        self.check_body(&body)?;
+        for slot in &self.miis {
+            let mine: Values = miis
+                .iter()
+                .filter(|(k, _)| slot.holds(k))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            if !mine.is_empty() {
+                slot.write(&mut body, ctx.record_key()?, &mine)?;
+            }
+        }
+        Ok(body)
+    }
+
+    /// Values in `body` the game would refuse or reset.
+    pub fn problems(&self, body: &[u8]) -> Vec<String> {
+        let mut out = match self.read_plain(body) {
+            Ok(values) => values
+                .iter()
+                .filter_map(|(k, v)| check(field(self, k).ok()?, v).err())
+                .map(|e| e.to_string())
+                .collect(),
+            Err(e) => vec![e.to_string()],
+        };
+        match self.engine.problems(body) {
+            Ok(p) => out.extend(p),
+            Err(e) => out.push(e.to_string()),
+        }
+        out
     }
 }
 
-static TITLES: &[&dyn Title] = &[&crate::plaza::PlazaTitle];
-
-pub fn all() -> &'static [&'static dyn Title] {
-    TITLES
+/// The registry's titles: built-in plugins, then those in the plugin folder.
+pub fn all() -> &'static [Title] {
+    crate::plugin::registry().all()
 }
 
 /// Finds a title by hex ID or by name, ignoring case.
-pub fn find(id_or_name: &str) -> Option<&'static dyn Title> {
-    let id = u32::from_str_radix(id_or_name.trim_start_matches("0x"), 16).ok();
-    TITLES
-        .iter()
-        .copied()
-        .find(|t| Some(t.id()) == id || t.name().eq_ignore_ascii_case(id_or_name))
+pub fn find(id_or_name: &str) -> Option<&'static Title> {
+    crate::plugin::registry().find(id_or_name)
 }
 
-pub fn by_id(id: u32) -> Option<&'static dyn Title> {
-    TITLES.iter().copied().find(|t| t.id() == id)
+pub fn by_id(id: u32) -> Option<&'static Title> {
+    crate::plugin::registry().by_id(id)
 }
 
 fn invalid(field: &Field, why: String) -> Error {
@@ -138,15 +410,23 @@ pub fn unhex(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// Whether `v` has the JSON type `kind` takes, whatever its value.
+fn same_type(kind: &Kind, v: &Value) -> bool {
+    match kind {
+        Kind::Number { .. } => v.is_u64(),
+        _ => v.is_string(),
+    }
+}
+
 /// Checks a value against its field, returning it in canonical form.
 pub fn check(field: &Field, v: &Value) -> Result<Value, Error> {
-    match field.kind {
+    match &field.kind {
         Kind::Text { max, forbid } => {
             let s = v
                 .as_str()
                 .ok_or_else(|| invalid(field, format!("expected text, got {v}")))?;
             let units = s.encode_utf16().count();
-            if units > max {
+            if units > *max {
                 return Err(invalid(field, format!("{units} characters, at most {max}")));
             }
             if let Some(c) = s.chars().find(|c| forbid.contains(*c)) {
@@ -160,7 +440,7 @@ pub fn check(field: &Field, v: &Value) -> Result<Value, Error> {
             let n = v
                 .as_u64()
                 .ok_or_else(|| invalid(field, format!("expected a whole number, got {v}")))?;
-            if n < min || n > max {
+            if n < *min || n > *max {
                 return Err(invalid(field, format!("{n} is outside {min}..={max}")));
             }
             if exclude.contains(&n) {
@@ -172,18 +452,30 @@ pub fn check(field: &Field, v: &Value) -> Result<Value, Error> {
             let ok = v
                 .as_str()
                 .and_then(unhex)
-                .is_some_and(|b| b.len() == Icon::byte_len(size));
+                .is_some_and(|b| b.len() == Icon::byte_len(*size));
             if !ok {
                 return Err(invalid(field, format!("expected a {size}x{size} image")));
             }
             Ok(v.clone())
         }
         Kind::Bytes { len } => {
-            let ok = v.as_str().and_then(unhex).is_some_and(|b| b.len() == len);
+            let ok = v.as_str().and_then(unhex).is_some_and(|b| b.len() == *len);
             if !ok {
                 return Err(invalid(field, format!("expected {len} bytes as hex")));
             }
             Ok(v.clone())
+        }
+        Kind::Mii { .. } => {
+            let bytes = v
+                .as_str()
+                .and_then(unhex)
+                .ok_or_else(|| invalid(field, "expected a Mii record as hex".into()))?;
+            let mii = match bytes.len() {
+                STORED_SIZE => Record::from_stored(&bytes),
+                _ => Record::from_bytes(&bytes),
+            }
+            .map_err(|e| invalid(field, e.to_string()))?;
+            Ok(Value::from(hex(mii.as_bytes())))
         }
     }
 }
@@ -191,7 +483,6 @@ pub fn check(field: &Field, v: &Value) -> Result<Value, Error> {
 /// Reads a value for `field` from command-line text.
 pub fn from_text(field: &Field, text: &str) -> Result<Value, Error> {
     let v = match field.kind {
-        Kind::Text { .. } | Kind::Image { .. } | Kind::Bytes { .. } => Value::from(text),
         Kind::Number { hex, .. } => {
             let t = text.trim();
             let parsed = match t.strip_prefix("0x") {
@@ -201,12 +492,29 @@ pub fn from_text(field: &Field, text: &str) -> Result<Value, Error> {
             };
             Value::from(parsed.map_err(|_| invalid(field, format!("{text:?} is not a number")))?)
         }
+        _ => Value::from(text),
     };
     check(field, &v)
 }
 
+/// Reads a Mii or bytes field from a file, unprotecting a Mii when `record_key` is given.
+pub fn from_file(field: &Field, bytes: &[u8], record_key: Option<&Key>) -> Result<Value, Error> {
+    match field.kind {
+        Kind::Mii { .. } if bytes.len() == WRAPPED_SIZE => {
+            let key = record_key
+                .ok_or_else(|| Error::Keys("a protected Mii needs the slot0x31 key".into()))?;
+            check(
+                field,
+                &Value::from(hex(mii::unwrap(key, bytes)?.as_bytes())),
+            )
+        }
+        Kind::Mii { .. } | Kind::Bytes { .. } => check(field, &Value::from(hex(bytes))),
+        _ => Err(invalid(field, "can't be read from a file".into())),
+    }
+}
+
 /// Looks up `key` in a title's fields.
-pub fn field(title: &dyn Title, key: &str) -> Result<&'static Field, Error> {
+pub fn field<'a>(title: &'a Title, key: &str) -> Result<&'a Field, Error> {
     title
         .fields()
         .iter()
@@ -215,7 +523,7 @@ pub fn field(title: &dyn Title, key: &str) -> Result<&'static Field, Error> {
 }
 
 /// Checks every value in `values` against `title`'s fields.
-pub fn check_all(title: &dyn Title, values: &Values) -> Result<Values, Error> {
+pub fn check_all(title: &Title, values: &Values) -> Result<Values, Error> {
     values
         .iter()
         .map(|(k, v)| Ok((k.clone(), check(field(title, k)?, v)?)))
@@ -267,7 +575,7 @@ pub fn message_text(c: &Container) -> Option<String> {
 ///
 /// The icon and text default to `template`'s, then to the title's own.
 pub fn message(
-    title: &dyn Title,
+    title: &Title,
     body: &[u8],
     key: &TitleKey,
     template: Option<&Container>,
@@ -304,39 +612,45 @@ pub fn message(
 mod tests {
     use super::*;
 
-    const TEXT: Field = Field {
-        key: "t",
-        label: "T",
-        kind: Kind::Text {
-            max: 3,
-            forbid: "%",
-        },
-        help: "",
-        advanced: false,
-    };
-    const NUMBER: Field = Field {
-        key: "n",
-        label: "N",
-        kind: Kind::Number {
-            min: 1,
-            max: 10,
-            exclude: &[5],
-            hex: false,
-        },
-        help: "",
-        advanced: false,
-    };
+    fn text() -> Field {
+        Field {
+            key: "t".into(),
+            label: "T".into(),
+            kind: Kind::Text {
+                max: 3,
+                forbid: "%".into(),
+            },
+            help: String::new(),
+            advanced: false,
+        }
+    }
+
+    fn number() -> Field {
+        Field {
+            key: "n".into(),
+            label: "N".into(),
+            kind: Kind::Number {
+                min: 1,
+                max: 10,
+                exclude: vec![5],
+                hex: false,
+            },
+            help: String::new(),
+            advanced: false,
+        }
+    }
 
     #[test]
     fn checks_values() {
-        assert!(check(&TEXT, &Value::from("abc")).is_ok());
-        assert!(check(&TEXT, &Value::from("abcd")).is_err());
-        assert!(check(&TEXT, &Value::from("a%")).is_err());
-        assert!(check(&TEXT, &Value::from(3)).is_err());
-        assert_eq!(from_text(&NUMBER, "0x0a").unwrap(), Value::from(10));
-        assert!(from_text(&NUMBER, "5").is_err());
-        assert!(from_text(&NUMBER, "11").is_err());
-        assert!(from_text(&NUMBER, "x").is_err());
+        let (t, n) = (text(), number());
+        assert!(check(&t, &Value::from("abc")).is_ok());
+        assert!(check(&t, &Value::from("abcd")).is_err());
+        assert!(check(&t, &Value::from("a%")).is_err());
+        assert!(check(&t, &Value::from(3)).is_err());
+        assert_eq!(from_text(&n, "0x0a").unwrap(), Value::from(10));
+        assert!(from_text(&n, "5").is_err());
+        assert!(from_text(&n, "11").is_err());
+        assert!(from_text(&n, "x").is_err());
     }
 
     #[test]
@@ -344,10 +658,5 @@ mod tests {
         assert_eq!(find("00020800").map(|t| t.id()), Some(0x0002_0800));
         assert_eq!(find("mii plaza").map(|t| t.id()), Some(0x0002_0800));
         assert!(find("00030600").is_none());
-        for t in all() {
-            for f in t.fields() {
-                assert_eq!(t.fields().iter().filter(|g| g.key == f.key).count(), 1);
-            }
-        }
     }
 }

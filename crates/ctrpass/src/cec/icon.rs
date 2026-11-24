@@ -96,6 +96,30 @@ impl Icon {
         Icon { size, pixels }
     }
 
+    /// Scales to `size`, averaging the pixels each new pixel covers.
+    pub fn resized(&self, size: usize) -> Self {
+        let rgb = self.to_rgb();
+        let n = self.size;
+        let span = |i: usize| (i * n / size, ((i + 1) * n / size).max(i * n / size + 1));
+        let mut pixels = Vec::with_capacity(size * size);
+        for y in 0..size {
+            let (y0, y1) = span(y);
+            for x in 0..size {
+                let (x0, x1) = span(x);
+                let mut sum = [0u32; 3];
+                for p in (y0..y1).flat_map(|sy| &rgb[sy * n + x0..sy * n + x1]) {
+                    for c in 0..3 {
+                        sum[c] += u32::from(p[c]);
+                    }
+                }
+                let count = ((y1 - y0) * (x1 - x0)) as u32;
+                let [r, g, b] = sum.map(|s| (s / count) as u8);
+                pixels.push(rgb565(r, g, b));
+            }
+        }
+        Icon { size, pixels }
+    }
+
     pub fn to_rgb(&self) -> Vec<[u8; 3]> {
         self.pixels.iter().map(|&p| rgb888(p)).collect()
     }

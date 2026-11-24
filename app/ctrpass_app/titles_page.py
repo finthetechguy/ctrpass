@@ -1,5 +1,7 @@
 """The page listing the games in the store and whether each receives messages."""
 
+import os
+
 import ctrpass
 from gi.repository import Adw, GLib, Gtk
 
@@ -42,8 +44,11 @@ class TitlesPage(Gtk.Stack):
         plus.connect("clicked", lambda _b: self.add_dialog())
         self.group.set_header_suffix(plus)
         page.add(self.group)
+        self.errors = Adw.PreferencesGroup(title="Plugin Errors", description="These plugins couldn't be loaded.")
+        page.add(self.errors)
         self.add_named(page, "list")
         self.rows = []
+        self.error_rows = []
 
     def refresh(self):
         for row in self.rows:
@@ -52,9 +57,14 @@ class TitlesPage(Gtk.Stack):
         store = self.window.store
         titles = store.titles() if store else []
         names = self.window.title_names()
+        forms = {t["title"]: t for t in ctrpass.titles()}
         for t in sorted(titles, key=lambda t: title_name(t["title"], names).casefold()):
             row = Adw.ActionRow(title=esc(title_name(t["title"], names)))
-            row.set_subtitle(esc(" · ".join([f"{t['title']:08X}"] + counts(t))))
+            parts = [f"{t['title']:08X}"]
+            form = forms.get(t["title"])
+            if form:
+                parts.append("Plugin" if form["plugin"] else "Built-in")
+            row.set_subtitle(esc(" · ".join(parts + counts(t))))
             if not t["key"]:
                 row.add_suffix(Gtk.Image(icon_name="dialog-warning-symbolic", tooltip_text="No key for this game"))
             switch = Gtk.Switch(active=t["receive"], valign=Gtk.Align.CENTER, tooltip_text="Receive messages")
@@ -66,7 +76,19 @@ class TitlesPage(Gtk.Stack):
             row.add_suffix(remove)
             self.group.add(row)
             self.rows.append(row)
+        self.show_errors()
         self.set_visible_child_name("list" if titles else "empty")
+
+    def show_errors(self):
+        for row in self.error_rows:
+            self.errors.remove(row)
+        self.error_rows = []
+        for e in ctrpass.plugin_issues()["errors"]:
+            row = Adw.ActionRow(title=esc(os.path.basename(e["file"])), subtitle=esc(e["error"]), tooltip_text=e["file"])
+            row.add_prefix(Gtk.Image(icon_name="dialog-warning-symbolic"))
+            self.errors.add(row)
+            self.error_rows.append(row)
+        self.errors.set_visible(bool(self.error_rows))
 
     def set_receive(self, title, on):
         try:

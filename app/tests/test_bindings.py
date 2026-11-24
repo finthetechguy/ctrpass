@@ -35,6 +35,8 @@ class BindingsTest(unittest.TestCase):
             ctrpass.check_keys("nonsense")
         plaza = [t for t in ctrpass.titles() if t["title"] == PLAZA][0]
         self.assertTrue(any(f["key"] == "name" for f in plaza["fields"]))
+        self.assertIsNone(plaza["plugin"])
+        self.assertIn("errors", ctrpass.plugin_issues())
 
     def test_build_store_and_file(self):
         msg = ctrpass.build_message(PLAZA, {"name": "Tester"}, KEYS, seed=self.a.seed)
